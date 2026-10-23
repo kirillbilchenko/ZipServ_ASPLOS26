@@ -12,7 +12,7 @@
 #include <limits>
 #include <string>
 #include "../../../build/L_API.cuh"
-#include "../../../csrc/CodecUtils.h"
+#include "../../../csrc/HostPacker.h"
 
 // Layout version 1. All lengths are bytes, all seven buffers have independent ownership.
 struct Packed {
@@ -37,40 +37,22 @@ extern "C" int zipserv_compress(const void* weights, int m, int k, Packed* out) 
         last_error = "BF16 matrix must have positive 64-aligned dimensions and int32 offsets";
         return -1;
     }
-    __nv_bfloat16* rare = nullptr;
-    uint8_t* sm = nullptr;
-    uint64_t *b1 = nullptr, *b2 = nullptr, *b3 = nullptr;
-    int *small = nullptr, *medium = nullptr, *global = nullptr;
-    int max_common = 0, max_rare = 0;
-    uint8_t start_exp = 0;
-    int tiles = -1;
     try {
-        const auto* data = static_cast<const __nv_bfloat16*>(weights);
-        uint64_t counts[256] = {};
-        for (int i = 0; i < m * k; ++i) ++counts[(__bfloat16_as_ushort(data[i]) >> 7) & 255];
-        const int base = zipserv::best_exponent_window(counts);
-        int exponents[7];
-        for (int i = 0; i < 7; ++i) exponents[i] = base + i;
-        start_exp = uint8_t(base - 1);
-        tiles = InitBF16MatrixTripleBitmap(
-            const_cast<__nv_bfloat16*>(data), m, k, 8, 16, 64, 8, 64, 64, exponents,
-            &sm, &rare, &b1, &b2, &b3, &small, &medium, &global, max_common, max_rare);
-    } catch (const std::exception& error) { last_error = error.what(); }
-    std::free(small);
-    void* pointers[] = {sm, rare, b1, b2, b3, medium, global};
-    std::memcpy(out->buffers, pointers, sizeof(pointers));
-    if (tiles <= 0 || !global) {
-        zipserv_free(out); last_error = "ZipServ host compression failed"; return -1;
+        auto packed = zipserv::pack_bf16(weights, m, k);
+        const auto lengths = packed.lengths();
+        const int indices[] = {0, 1, 2, 3, 4, 6, 7};
+        for (int i = 0; i < 7; ++i) out->lengths[i] = lengths[indices[i]];
+        out->m = m; out->k = k; out->max_common = packed.max_common;
+        out->max_rare = packed.max_rare; out->start_exp = uint8_t(packed.base - 1);
+        void* buffers[] = {packed.common.release(), packed.rare.release(),
+            packed.b1.release(), packed.b2.release(), packed.b3.release(),
+            packed.medium.release(), packed.global.release()};
+        std::memcpy(out->buffers, buffers, sizeof(buffers));
+        return 0;
+    } catch (const std::exception& error) {
+        last_error = error.what();
+        return -1;
     }
-    uint64_t small_tiles = uint64_t(m / 8) * (k / 8);
-    uint64_t medium_tiles = uint64_t(m / 16) * (k / 64);
-    uint64_t lengths[] = {uint64_t(global[2 * tiles]), uint64_t(global[2 * tiles + 1]) * 2,
-        small_tiles * 8, small_tiles * 8, small_tiles * 8,
-        medium_tiles * 8, uint64_t(tiles + 1) * 8};
-    std::memcpy(out->lengths, lengths, sizeof(lengths));
-    out->m = m; out->k = k; out->max_common = max_common;
-    out->max_rare = max_rare; out->start_exp = start_exp;
-    return 0;
 }
 
 extern "C" int zipserv_mm(void* stream, const void* sm, const void* rare,

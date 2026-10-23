@@ -36,7 +36,7 @@ def main() -> None:
         "-std=c++17",
         "-O3",
         "--shared",
-        "-Xcompiler=-fPIC",
+        "-Xcompiler=-fPIC,-pthread",
         f"-gencode=arch=compute_{args.arch},code=sm_{args.arch}",
         str(root / "csrc/L_API.cu"),
         str(bridge),

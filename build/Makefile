@@ -17,7 +17,7 @@ NVCC          := $(CUDA_PATH)/bin/nvcc -ccbin $(HOST_COMPILER)
 
 # internal flags
 NVCCFLAGS   := -m$(shell getconf LONG_BIT)
-CCFLAGS     := -fPIC
+CCFLAGS     := -fPIC -pthread
 LDFLAGS     :=
 
 ALL_CCFLAGS :=
@@ -39,12 +39,12 @@ SMS ?= 80 86 89
 # Generate SASS code for each SM architecture listed in $(SMS)
 $(foreach sm,$(SMS),$(eval GENCODE_FLAGS += -gencode arch=compute_$(sm),code=sm_$(sm)))
 
-ALL_CCFLAGS +=  --threads 0 --std=c++17
+ALL_CCFLAGS +=  --threads 0 --std=c++17 -O3
 ALL_CCFLAGS += -maxrregcount=255
 ALL_CCFLAGS += --ptxas-options=-v,-warn-lmem-usage,--warn-on-spills
 ################################################################################
 
-HEAD_FILES = L_API.cuh ../csrc/CodecUtils.h \
+HEAD_FILES = L_API.cuh ../csrc/CodecUtils.h ../csrc/HostPacker.h \
 			 ../csrc/Reduction_Kernel.cuh ../csrc/L_Kernel.cuh \
 			 ../csrc/MatMulUtilities.cuh \
 			 ../csrc/MMA_PTX.cuh ../csrc/AsyncCopy_PTX.cuh \
