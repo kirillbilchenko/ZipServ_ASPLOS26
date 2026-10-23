@@ -1,3 +1,4 @@
+// Modified 2026 by Kyrylo Bilchenko: correctness and MxWave backports.
 /***************************************************************************
  * Copyright 2025 The ZipServ Authors. All rights reserved.
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -10,12 +11,24 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  ***************************************************************************/
+#pragma once
+#include <cstdint>
+#include <cuda_bf16.h>
 #include <cuda.h>
 #include <cuda_fp16.h>
 #include <cuda_runtime.h>
 #include <iostream>
 #include <vector>
 
+// Packed inputs must come from InitBF16MatrixTripleBitmap with the fixed tile
+// sizes below. M and K are positive multiples of 64; N may be zero. Split_K
+// divides K/64. Indices and products must fit signed int32; grid.y <= 65535.
+// Inputs, output and (when Split_K > 1) M*N*Split_K BF16 workspace reside on the
+// caller's CUDA device. Calls enqueue work on stream; buffers must remain alive
+// until it completes. The API validates shapes/pointers, not packed contents.
+// Weight reconstruction is bit-exact. GEMM accumulation, especially BF16 split
+// partials, can round differently from another backend. No concurrent-host-call
+// guarantee is made for per-kernel dynamic shared-memory attribute changes.
 cudaError_t BF16TripleBitmap_MM_API(
     cudaStream_t stream,
     const uint8_t* SignMantissa,          // Sign/mantissa for high-frequency elements
@@ -50,7 +63,11 @@ cudaError_t BF16TripleBitmap_Decompress_API(
     __nv_bfloat16* Output,
     const int M_Global,
     const int K_Global);
-// CPU function for BF16 matrix compression initialization
+// CPU compression returns the number of global tiles, or -1 on failure.
+// top_exponents contains seven consecutive integers in [0,255]; decoding uses
+// uint8_t(top_exponents[0] - 1) as start_exp. All eight output allocations belong
+// to the caller and must be freed with free(), including any partial allocations
+// after an allocation failure. Initialize output pointers to nullptr first.
 __host__ int InitBF16MatrixTripleBitmap(
     __nv_bfloat16* A_bf16,
     int M,

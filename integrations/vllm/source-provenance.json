@@ -1,0 +1,15 @@
+{
+  "repository": "https://github.com/kirillbilchenko/mxstream",
+  "worktree": "feat/lossless-mxfp4",
+  "head": "a99b3621c19cc76cf89d4d81607d82789f78df0a",
+  "uncommitted_source_sha256": {
+    "../mxstream/.worktrees/lossless-mxfp4/integrations/zipserv/mxwave_zipserv/runtime.py": "2a296929bf8363ec6bd9358c8eadbfcca47b77522bf030c8096ab22bd6441c35",
+    "../mxstream/.worktrees/lossless-mxfp4/integrations/zipserv/mxwave_zipserv/vllm_plugin.py": "42b8086355127be9ca27e766a7dac587f90057d67b6b7703ec6ebc044ca2bda1",
+    "../mxstream/.worktrees/lossless-mxfp4/integrations/zipserv/mxwave_zipserv/hybrid.py": "392d9cce02a1dfafbc719b752e5e35cf30249e622db0b2bfccf1e79c5037bf51",
+    "../mxstream/.worktrees/lossless-mxfp4/integrations/zipserv/native/bridge.cu": "273fc868b14a2a358728cb4764626bde67133adb0a51a426d434bc90512ac0e9",
+    "../mxstream/.worktrees/lossless-mxfp4/integrations/zipserv/check_runtime.py": "a65ef15a30a16118c9850c8d62db920ed5b85fe4621d278fdc1be81d4d21f5e7"
+  },
+  "license": "Apache-2.0",
+  "vllm_tag": "v0.32.0",
+  "vllm_commit": "5df63a7203cdb9328d824a27b682e77c7b9928be"
+}

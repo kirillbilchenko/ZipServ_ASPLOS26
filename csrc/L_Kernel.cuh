@@ -1,3 +1,4 @@
+// Modified 2026 by Kyrylo Bilchenko: correctness and MxWave backports.
 /***************************************************************************
  * Copyright 2025 The ZipServ Authors. All rights reserved.
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -11,6 +12,7 @@
  * limitations under the License.
  ***************************************************************************/
 #include "MatMulUtilities.cuh"
+#include "CodecUtils.h"
 #include <vector>
 #include <inttypes.h>
 #define __STDC_FORMAT_MACROS
@@ -170,8 +172,8 @@ __device__ __forceinline__ void LoadBF16FragWithTripleBitmap_SingleRow(
                                ((bitmap1 >> pos2) & 1ULL);
 
             // Precompute exponent bits
-            uint16_t exponent_bits_pos1 = (start_exp + code_pos1) << 7;
-            uint16_t exponent_bits_pos2 = (start_exp + code_pos2) << 7;
+            uint16_t exponent_bits_pos1 = zipserv::exponent_bits(start_exp, code_pos1);
+            uint16_t exponent_bits_pos2 = zipserv::exponent_bits(start_exp, code_pos2);
             
             // Calculate bitmasks
             uint64_t mask_before_pos1 = (1ULL << pos1) - 1;
@@ -409,10 +411,16 @@ __global__ void BF16TripleBitmap_MM_Kernel_Fast(
     const int* median_offset_high_warp_ptr = TileOffsets_Median + WarpOffset * 2;
     const int* median_offset_full_warp_ptr = TileOffsets_Median + WarpOffset * 2 + 1;
     
-    int next_high_freq_start = high_freq_start_ptr[2];
-    int next_full_start = full_start_ptr[2];
-    int next_high_freq_count = high_freq_start_ptr[4] - next_high_freq_start;
-    int next_full_count = full_start_ptr[4] - next_full_start;
+    // Only prefetch metadata for tiles in this Split-K partition. The offsets
+    // array has one terminal entry, not two speculative look-ahead entries.
+    int next_high_freq_start = 0, next_full_start = 0;
+    int next_high_freq_count = 0, next_full_count = 0;
+    if (NumIter > 1) {
+        next_high_freq_start = high_freq_start_ptr[2];
+        next_full_start = full_start_ptr[2];
+        next_high_freq_count = high_freq_start_ptr[4] - next_high_freq_start;
+        next_full_count = full_start_ptr[4] - next_full_start;
+    }
     
     cp_async_wait_group<0>();
     __syncthreads();
@@ -441,10 +449,15 @@ __global__ void BF16TripleBitmap_MM_Kernel_Fast(
         high_freq_count = next_high_freq_count;
         full_count = next_full_count;
         
-        next_high_freq_start = high_freq_start_ptr[(tile_id_k+2)*2];
-        next_full_start = full_start_ptr[(tile_id_k+2)*2];
-        next_high_freq_count = high_freq_start_ptr[(tile_id_k+3)*2] - next_high_freq_start;
-        next_full_count = full_start_ptr[(tile_id_k+3)*2] - next_full_start;
+        if (tile_id_k + 2 < NumIter) {
+            next_high_freq_start = high_freq_start_ptr[(tile_id_k+2)*2];
+            next_full_start = full_start_ptr[(tile_id_k+2)*2];
+            next_high_freq_count = high_freq_start_ptr[(tile_id_k+3)*2] - next_high_freq_start;
+            next_full_count = full_start_ptr[(tile_id_k+3)*2] - next_full_start;
+        } else {
+            next_high_freq_start = next_full_start = 0;
+            next_high_freq_count = next_full_count = 0;
+        }
         
         BTileGlobalPTR = BTileGlobalPTR + TILE_K;
         Bitmap1TileGlobalPTR = Bitmap1TileGlobalPTR + TilingConfig::TILE_BITMAP_K_V3;
@@ -713,10 +726,16 @@ __global__ void BF16TripleBitmap_MM_Kernel_Safe(
     const int* median_offset_high_warp_ptr = TileOffsets_Median + WarpOffset * 2;
     const int* median_offset_full_warp_ptr = TileOffsets_Median + WarpOffset * 2 + 1;
     
-    int next_high_freq_start = high_freq_start_ptr[2];
-    int next_full_start = full_start_ptr[2];
-    int next_high_freq_count = high_freq_start_ptr[4] - next_high_freq_start;
-    int next_full_count = full_start_ptr[4] - next_full_start;
+    // Only prefetch metadata for tiles in this Split-K partition. The offsets
+    // array has one terminal entry, not two speculative look-ahead entries.
+    int next_high_freq_start = 0, next_full_start = 0;
+    int next_high_freq_count = 0, next_full_count = 0;
+    if (NumIter > 1) {
+        next_high_freq_start = high_freq_start_ptr[2];
+        next_full_start = full_start_ptr[2];
+        next_high_freq_count = high_freq_start_ptr[4] - next_high_freq_start;
+        next_full_count = full_start_ptr[4] - next_full_start;
+    }
     
     cp_async_wait_group<0>();
     __syncthreads();
@@ -745,10 +764,15 @@ __global__ void BF16TripleBitmap_MM_Kernel_Safe(
         high_freq_count = next_high_freq_count;
         full_count = next_full_count;
         
-        next_high_freq_start = high_freq_start_ptr[(tile_id_k+2)*2];
-        next_full_start = full_start_ptr[(tile_id_k+2)*2];
-        next_high_freq_count = high_freq_start_ptr[(tile_id_k+3)*2] - next_high_freq_start;
-        next_full_count = full_start_ptr[(tile_id_k+3)*2] - next_full_start;
+        if (tile_id_k + 2 < NumIter) {
+            next_high_freq_start = high_freq_start_ptr[(tile_id_k+2)*2];
+            next_full_start = full_start_ptr[(tile_id_k+2)*2];
+            next_high_freq_count = high_freq_start_ptr[(tile_id_k+3)*2] - next_high_freq_start;
+            next_full_count = full_start_ptr[(tile_id_k+3)*2] - next_full_start;
+        } else {
+            next_high_freq_start = next_full_start = 0;
+            next_high_freq_count = next_full_count = 0;
+        }
         
         BTileGlobalPTR = BTileGlobalPTR + TILE_K;
         Bitmap1TileGlobalPTR = Bitmap1TileGlobalPTR + TilingConfig::TILE_BITMAP_K_V3;
@@ -1024,8 +1048,8 @@ __device__ __forceinline__ void DecompressMedianTileToSharedMemory(
                                ((bitmap1 >> pos2) & 1ULL);
 
             // Precompute exponent bits
-            uint16_t exponent_bits_pos1 = (start_exp + code_pos1) << 7;
-            uint16_t exponent_bits_pos2 = (start_exp + code_pos2) << 7;
+            uint16_t exponent_bits_pos1 = zipserv::exponent_bits(start_exp, code_pos1);
+            uint16_t exponent_bits_pos2 = zipserv::exponent_bits(start_exp, code_pos2);
             
             // Count high-frequency elements before pos1 (single popcount)
             uint64_t mask_before_pos1 = (1ULL << pos1) - 1;

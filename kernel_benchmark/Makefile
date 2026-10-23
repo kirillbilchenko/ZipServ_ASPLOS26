@@ -1,3 +1,4 @@
+# Modified 2026 by Kyrylo Bilchenko: portable builds.
 # Copyright 2025 The ZipServ Authors. All rights reserved.
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -28,9 +29,11 @@ ALL_LDFLAGS += $(ALL_CCFLAGS)
 ALL_LDFLAGS += $(addprefix -Xlinker ,$(LDFLAGS))
 
 # Common includes and paths for CUDA
-INCLUDES  := -I/usr/local/cuda/include/ 
-LIBRARIES := -lcublas 
-LIBRARIES += -lcusparse 
+MY_PATH ?= $(abspath ..)
+
+INCLUDES  := -I$(CUDA_PATH)/include/
+LIBRARIES := -lcublas
+
 
 ifneq ($(MY_PATH),)
 INCLUDES  += -I${MY_PATH}/build
@@ -43,24 +46,23 @@ SMS ?= 80 86 89
 # Generate SASS code for each SM architecture listed in $(SMS)
 $(foreach sm,$(SMS),$(eval GENCODE_FLAGS += -gencode arch=compute_$(sm),code=sm_$(sm)))
 
-ALL_CCFLAGS += --threads 0 --std=c++14
-ALL_CCFLAGS += -maxrregcount=255 
-ALL_CCFLAGS += --use_fast_math
+ALL_CCFLAGS += --threads 0 --std=c++17
+ALL_CCFLAGS += -maxrregcount=255
 ALL_CCFLAGS += --ptxas-options=-v,-warn-lmem-usage,--warn-on-spills
 ################################################################################
 # Target rules
 all: test_mm  test_decompress
 
-test_mm.o:  test_mm.cu utils.h 
+test_mm.o:  test_mm.cu utils.h ../build/L_API.cuh ../csrc/CodecUtils.h
 	$(EXEC) $(NVCC) $(INCLUDES) $(ALL_CCFLAGS) $(GENCODE_FLAGS) -o $@ -c $<
 
-test_mm: test_mm.o 
+test_mm: test_mm.o
 	$(EXEC) $(NVCC) $(ALL_LDFLAGS) $(GENCODE_FLAGS) -o $@ $+ $(LIBRARIES)
 
-test_decompress.o:  test_decompress.cu utils.h 
+test_decompress.o:  test_decompress.cu utils.h ../build/L_API.cuh ../csrc/CodecUtils.h
 	$(EXEC) $(NVCC) $(INCLUDES) $(ALL_CCFLAGS) $(GENCODE_FLAGS) -o $@ -c $<
 
-test_decompress: test_decompress.o 
+test_decompress: test_decompress.o
 	$(EXEC) $(NVCC) $(ALL_LDFLAGS) $(GENCODE_FLAGS) -o $@ $+ $(LIBRARIES)
 
 clean:

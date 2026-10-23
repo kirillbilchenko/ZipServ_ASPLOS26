@@ -1,3 +1,4 @@
+// Modified 2026 by Kyrylo Bilchenko: correctness and MxWave backports.
 /***************************************************************************
  * Copyright 2025 The ZipServ Authors. All rights reserved.
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -27,12 +28,14 @@ __global__ void SplitK_Reduction_BF16(__nv_bfloat16* C, __nv_bfloat16* Reduction
     for (int i = 0; i < Split_K; i++) {
         #pragma unroll
         for (int j = 0; j < HALF_PER_128B; j++)
-            Results[j] += __bfloat162float(R_BasePTR_ThisBlock[threadIdx.x * HALF_PER_128B + j]);
+            if (ELEMENT_PER_THREADBLOCK * blockIdx.x + threadIdx.x * HALF_PER_128B + j < M_Global * N_Global)
+                Results[j] += __bfloat162float(R_BasePTR_ThisBlock[threadIdx.x * HALF_PER_128B + j]);
         R_BasePTR_ThisBlock += M_Global * N_Global;
     }
     
     #pragma unroll
     for (int j = 0; j < HALF_PER_128B; j++)
-        C_BasePTR_ThisBlock[threadIdx.x * HALF_PER_128B + j] = __float2bfloat16(Results[j]);
+        if (ELEMENT_PER_THREADBLOCK * blockIdx.x + threadIdx.x * HALF_PER_128B + j < M_Global * N_Global)
+            C_BasePTR_ThisBlock[threadIdx.x * HALF_PER_128B + j] = __float2bfloat16(Results[j]);
 }
 

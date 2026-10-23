@@ -1,0 +1,8 @@
+Copyright 2026 Kyrylo Bilchenko
+
+Adapted from MxWave integrations/zipserv under Apache-2.0.
+Modified for this ZipServ checkout and vLLM 0.32.0: independent package and
+operator names, native ABI v2, direct arbitrary-size batches, default
+configuration, stricter validation, and local-source builds.
+See integrations/vllm/source-provenance.json and integrations/vllm/README.md
+in the source repository for provenance and validation scope.
