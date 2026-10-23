@@ -94,6 +94,64 @@ formats. It does not implement or benchmark those alternative CUDA decoders.
 For Blackwell targets, use a toolkit supporting the selected SM; this fork was
 tested with CUDA 13.0 on SM121. Native Makefiles accept `SMS=121` as well.
 
+## CPU packing
+
+The CPU encoder in [csrc/HostPacker.h](csrc/HostPacker.h) builds the same
+triple-bitmap format without requiring CUDA headers. It counts tile payloads
+first, allocates their exact sizes, and writes independent tiles in parallel.
+Exponent classification uses the consecutive-window arithmetic directly. Only
+alignment padding is zeroed. The native API remains compatible; the vLLM bridge
+also skips the small-tile count buffer that GPU decoding does not use.
+
+Automatic packing uses one worker for matrices below 1,048,576 values and up to
+eight workers for larger matrices. C++ callers can select a worker count through
+`pack_bf16`; input words must stay immutable until it returns. The Python adapter
+shares the native packed allocations with CPU tensors. The allocations remain
+alive until the last tensor storage view is released; no extra payload copy is
+needed during the handoff.
+
+CPU compatibility checks and benchmarks run with a C++17 compiler on Linux or
+macOS; CUDA is needed only for the GPU tests:
+
+```bash
+make -C tests cpu sanitize
+make -C tests thread-sanitize  # requires compiler ThreadSanitizer support
+make -C tests benchmark-host
+
+# Implementation, rows, columns, repetitions, secondary exponent cluster %,
+# and optional worker count (0 = automatic). Each command is a fresh process.
+./tools/bench_host_packer verify   16384 8192 1 5
+./tools/bench_host_packer legacy   16384 8192 1 5
+./tools/bench_host_packer serial   16384 8192 1 5
+./tools/bench_host_packer parallel 16384 8192 1 5 8
+```
+
+The benchmark includes exponent selection and allocation, uses deterministic
+synthetic BF16 words, and compares against the frozen encoder from `612dc6c`.
+The separate `verify` mode checks every output byte for the chosen matrix size.
+`peak_rss_mib` includes the input matrix and all process memory; repeated packing
+can increase the allocator's retained memory, so use one repetition for
+single-call peak measurements. Timings exclude Python tensor copies, disk I/O,
+GPU transfers and inference. CPU tests compare every packed byte and offset to
+the old encoder and independently decode the result, including all BF16 bit
+patterns, all exponent windows and concurrent calls.
+
+The Python handoff can also be built and measured without CUDA or vLLM. Use a
+Python environment containing Torch; the compiler can be selected with `CXX`:
+
+```bash
+python integrations/vllm/build_native.py --cpu-only --output build/libzipserv_cpu.so
+python tools/bench_python_packer.py --mode copy --library build/libzipserv_cpu.so
+python tools/bench_python_packer.py --mode share --library build/libzipserv_cpu.so
+python -m pytest -q tests/test_runtime.py tests/test_host_runtime.py
+```
+
+Both benchmark modes use the current native encoder and the same synthetic
+BF16 input. `copy` reproduces the former Python handoff; `share` uses the new
+shared buffers. Each invocation packs once in a fresh process and reports total
+process peak RSS, including Torch and the input matrix. This measures CPU
+preparation, without disk loading, GPU transfer or inference.
+
 ## Citation
 
 If you use ZipServ in your research, please cite our ASPLOS'26 paper:

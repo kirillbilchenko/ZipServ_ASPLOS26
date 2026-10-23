@@ -66,8 +66,10 @@ cudaError_t BF16TripleBitmap_Decompress_API(
 // CPU compression returns the number of global tiles, or -1 on failure.
 // top_exponents contains seven consecutive integers in [0,255]; decoding uses
 // uint8_t(top_exponents[0] - 1) as start_exp. All eight output allocations belong
-// to the caller and must be freed with free(), including any partial allocations
-// after an allocation failure. Initialize output pointers to nullptr first.
+// to the caller and must be freed with free(). Packing allocates exact payload
+// sizes and uses up to eight CPU workers for large matrices. Input must remain
+// immutable until this synchronous call returns. On failure no output allocation
+// is transferred. Initialize output pointers to nullptr first.
 __host__ int InitBF16MatrixTripleBitmap(
     __nv_bfloat16* A_bf16,
     int M,

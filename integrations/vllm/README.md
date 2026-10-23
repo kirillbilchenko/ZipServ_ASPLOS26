@@ -33,6 +33,29 @@ For an existing offline environment with setuptools >=77, installation can use
 `--no-build-isolation`. The wheel contains the Python package and notices;
 the native library is built separately.
 
+## CPU-only packing
+
+The CPU encoder and Python runtime can be used from a source checkout on Linux
+or macOS without CUDA or vLLM. A C++17 compiler and a working Torch installation
+are sufficient:
+
+```bash
+python integrations/vllm/build_native.py --cpu-only --output build/libzipserv_cpu.so
+export ZIPSERV_LIBRARY="$PWD/build/libzipserv_cpu.so"
+export PYTHONPATH="$PWD/integrations/vllm"
+```
+
+`CXX` selects the CPU compiler. Without an explicit output, CPU builds create
+`build/libzipserv_cpu.so` on Linux or `build/libzipserv_cpu.dylib` on macOS.
+The manifest records `cuda: false`. CPU-only builds expose packing and cleanup;
+GPU execution requires rebuilding with `--arch` and selecting that library.
+
+`compress()` returns CPU tensors sharing the native allocations. A shared owner
+keeps all seven buffers and the native library alive until the last tensor
+storage view is released, even if the original `PackedWeight` is deleted.
+Empty streams use ordinary empty tensors. No floating-point conversion or
+quantization is performed, and the native ABI and packed format are unchanged.
+
 ## Raw BF16 model
 
 ```bash
@@ -81,15 +104,18 @@ directory. check_adapter.py initializes and destroys actual single-rank NCCL
 groups, loads real vLLM linear classes, and checks fused shard loading,
 decompression, fallback and Dynamo capture.
 
-CPU-only Python contracts can run in a Torch/pytest environment without vLLM:
+CPU-only Python checks build the host bridge in a temporary directory and test
+bitwise decoding, shared pointers, retained views and failure cleanup. They need
+a C++17 compiler and a Torch/pytest environment, without CUDA or vLLM:
 
 ```bash
-python -m pytest -q tests/test_runtime.py
+python -m pytest -q tests/test_runtime.py tests/test_host_runtime.py
 ```
 
-Verified: native SM121 correctness and memcheck, Torch custom-op schema/fake
-behavior, graphs/streams, vLLM 0.32 TP1 linear loaders, package installation and
-entrypoint discovery. Native reconstruction preserves every BF16 word;
+Verified: native SM121 correctness and memcheck, shared-buffer CPU ownership
+on Torch 2.13/2.14, Torch custom-op schema/fake behavior, graphs/streams, vLLM
+0.32 TP1 linear loaders, package installation and entrypoint discovery. The
+shared-buffer CUDA runtime checks also pass under Compute Sanitizer. Native reconstruction preserves every BF16 word;
 floating-point GEMM outputs can differ from another backend's rounding.
 
 Not yet qualified: full-model serving on 0.32, TP2, hybrid-head model execution,

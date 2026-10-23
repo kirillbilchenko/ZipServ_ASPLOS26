@@ -11,3 +11,10 @@ kernel_benchmark/test_decompress
 tests/test_cuda
 tests/test_codec_utils
 tools/profile_bf16
+tests/test_host_packer
+tests/test_host_packer_sanitize
+tools/bench_host_packer
+tests/test_host_packer_tsan
+*.dSYM/
+build/libzipserv_cpu.json
+build/libzipserv_vllm.json

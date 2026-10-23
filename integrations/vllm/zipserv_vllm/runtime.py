@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import ctypes
 import os
+import weakref
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -34,7 +35,7 @@ def _library() -> ctypes.CDLL:
     path = os.environ.get("ZIPSERV_LIBRARY")
     if not path or not Path(path).is_file():
         raise RuntimeError(
-            "Build the ZipServ bridge and set ZIPSERV_LIBRARY to its .so"
+            "Build the ZipServ bridge and set ZIPSERV_LIBRARY to its shared library"
         )
     lib = ctypes.CDLL(path)
     ptr, integer = ctypes.c_void_p, ctypes.c_int
@@ -51,13 +52,41 @@ def _library() -> ctypes.CDLL:
     lib.zipserv_compress.restype = integer
     lib.zipserv_free.argtypes = [ctypes.POINTER(_NativePacked)]
     lib.zipserv_free.restype = None
-    lib.zipserv_mm.argtypes = (
-        [ptr] * 8 + [integer] * 3 + [ptr] * 2 + [integer] * 3 + [ptr, integer]
-    )
-    lib.zipserv_mm.restype = integer
-    lib.zipserv_decode.argtypes = [ptr] * 8 + [integer] * 3 + [ptr] + [integer] * 2
-    lib.zipserv_decode.restype = integer
+    if hasattr(lib, "zipserv_mm") and hasattr(lib, "zipserv_decode"):
+        lib.zipserv_mm.argtypes = (
+            [ptr] * 8 + [integer] * 3 + [ptr] * 2 + [integer] * 3 + [ptr, integer]
+        )
+        lib.zipserv_mm.restype = integer
+        lib.zipserv_decode.argtypes = [ptr] * 8 + [integer] * 3 + [ptr] + [integer] * 2
+        lib.zipserv_decode.restype = integer
     return lib
+
+
+def _cuda_library() -> ctypes.CDLL:
+    lib = _library()
+    if not hasattr(lib, "zipserv_mm") or not hasattr(lib, "zipserv_decode"):
+        raise RuntimeError(
+            "This ZipServ library has no CUDA support; rebuild with --arch for GPU execution"
+        )
+    return lib
+
+
+def _free_packed(lib: ctypes.CDLL, native: _NativePacked) -> None:
+    lib.zipserv_free(ctypes.byref(native))
+
+
+class _NativeBufferOwner:
+    """Release native allocations after the last tensor storage view is gone."""
+
+    __slots__ = ("__weakref__", "_finalizer")
+
+    def __init__(self, lib: ctypes.CDLL, native: _NativePacked) -> None:
+        # Keep both the descriptor and its library alive independently of the
+        # library cache. No callback argument holds a reference to this owner.
+        self._finalizer = weakref.finalize(self, _free_packed, lib, native)
+        # Do not free live tensor storage early during interpreter shutdown.
+        # The OS reclaims allocations still reachable when the process exits.
+        self._finalizer.atexit = False
 
 
 def _check(status: int) -> None:
@@ -95,7 +124,7 @@ class PackedWeight:
 
 
 def compress(weight: Tensor) -> PackedWeight:
-    """Pack a CPU BF16 matrix; no floating point cast or quantization is performed."""
+    """Pack CPU BF16 bits and share native buffers with tensors without copying."""
     if (
         weight.device.type != "cpu"
         or weight.dtype != torch.bfloat16
@@ -114,25 +143,28 @@ def compress(weight: Tensor) -> PackedWeight:
     lib = _library()
     _check(lib.zipserv_compress(weight.data_ptr(), m, k, ctypes.byref(native)))
     try:
-        # Copy directly into owned tensors. Intermediate bytes/bytearray copies
-        # otherwise add two large temporary buffers when packing a real LM head.
-        owned = []
-        for pointer, length in zip(native.buffers, native.lengths, strict=True):
-            buffer = torch.empty(length, dtype=torch.uint8)
-            if length:
-                ctypes.memmove(buffer.data_ptr(), pointer, length)
-            owned.append(buffer)
-        buffers = tuple(owned)
-        return PackedWeight(
-            buffers,
-            native.m,
-            native.k,
-            native.max_common,
-            native.max_rare,
-            native.start_exp,
-        )
-    finally:
+        owner = _NativeBufferOwner(lib, native)
+    except BaseException:
         lib.zipserv_free(ctypes.byref(native))
+        raise
+    buffers = []
+    for pointer, length in zip(native.buffers, native.lengths, strict=True):
+        if not length:
+            buffers.append(torch.empty(0, dtype=torch.uint8))
+            continue
+        view = (ctypes.c_uint8 * length).from_address(pointer)
+        # frombuffer retains this Python buffer object for the tensor storage's
+        # lifetime, including slices and detached views of the resulting tensor.
+        view._zipserv_owner = owner
+        buffers.append(torch.frombuffer(view, dtype=torch.uint8))
+    return PackedWeight(
+        tuple(buffers),
+        native.m,
+        native.k,
+        native.max_common,
+        native.max_rare,
+        native.start_exp,
+    )
 
 
 def _validate_buffers(buffers: list[Tensor], device: torch.device) -> None:
@@ -178,6 +210,7 @@ def _linear(
         raise ValueError(
             "ZipServ output and Split-K workspace exceed native int32 indexing"
         )
+    lib = _cuda_library()
     with torch.cuda.device(x.device):
         flat = x.reshape(tokens, k).contiguous()
         output = x.new_empty((n, m))
@@ -185,7 +218,7 @@ def _linear(
         workspace = x.new_empty((split_k, n, m)) if split_k > 1 else x.new_empty(0)
         stream = torch.cuda.current_stream(x.device).cuda_stream
         _check(
-            _library().zipserv_mm(
+            lib.zipserv_mm(
                 stream,
                 *(buffer.data_ptr() for buffer in buffers),
                 max_common,
@@ -239,10 +272,11 @@ def decompress(packed: PackedWeight) -> Tensor:
     if device.type != "cuda":
         raise ValueError("ZipServ decompression requires packed CUDA buffers")
     _validate_buffers(list(packed.buffers), device)
+    lib = _cuda_library()
     with torch.cuda.device(device):
         output = torch.empty((packed.m, packed.k), dtype=torch.bfloat16, device=device)
         _check(
-            _library().zipserv_decode(
+            lib.zipserv_decode(
                 torch.cuda.current_stream(device).cuda_stream,
                 *(buffer.data_ptr() for buffer in packed.buffers),
                 packed.max_common,
