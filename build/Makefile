@@ -1,3 +1,4 @@
+# Modified 2026 by Kyrylo Bilchenko: portable builds.
 # Copyright 2025 The ZipServ Authors. All rights reserved.
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -28,7 +29,7 @@ ALL_LDFLAGS += $(ALL_CCFLAGS)
 ALL_LDFLAGS += $(addprefix -Xlinker ,$(LDFLAGS))
 
 # Common includes and paths for CUDA
-INCLUDES  := -I/usr/local/cuda/include/
+INCLUDES  := -I$(CUDA_PATH)/include/
 LIBRARIES := -lcublas
 
 ################################################################################
@@ -38,13 +39,12 @@ SMS ?= 80 86 89
 # Generate SASS code for each SM architecture listed in $(SMS)
 $(foreach sm,$(SMS),$(eval GENCODE_FLAGS += -gencode arch=compute_$(sm),code=sm_$(sm)))
 
-ALL_CCFLAGS +=  --threads 0 --std=c++11
-ALL_CCFLAGS += -maxrregcount=255 
-ALL_CCFLAGS += --use_fast_math
+ALL_CCFLAGS +=  --threads 0 --std=c++17
+ALL_CCFLAGS += -maxrregcount=255
 ALL_CCFLAGS += --ptxas-options=-v,-warn-lmem-usage,--warn-on-spills
 ################################################################################
 
-HEAD_FILES = L_API.cuh \
+HEAD_FILES = L_API.cuh ../csrc/CodecUtils.h \
 			 ../csrc/Reduction_Kernel.cuh ../csrc/L_Kernel.cuh \
 			 ../csrc/MatMulUtilities.cuh \
 			 ../csrc/MMA_PTX.cuh ../csrc/AsyncCopy_PTX.cuh \
@@ -55,7 +55,7 @@ all: libL_API.so
 libL_API.so: L_API.o
 	$(EXEC) $(NVCC) --shared $(ALL_LDFLAGS) $(GENCODE_FLAGS) -o $@ $+ $(LIBRARIES)
 
-L_API.o:  ../csrc/L_API.cu $(HEAD_FILES)  
+L_API.o:  ../csrc/L_API.cu $(HEAD_FILES)
 	$(EXEC) $(NVCC) $(INCLUDES) $(ALL_CCFLAGS) $(GENCODE_FLAGS) -o $@ -c $<
 
 clean:

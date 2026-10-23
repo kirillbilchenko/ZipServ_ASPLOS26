@@ -1,3 +1,4 @@
+// Modified 2026 by Kyrylo Bilchenko: correctness and MxWave backports.
 #include <assert.h>
 #include <cuda.h>
 #include <cuda_bf16.h>
@@ -233,9 +234,9 @@ void compare_bf16_matrices(const char* name1, const char* name2,
     if (identical_count == total_elements) {
         printf("  ✓ Perfect match! All elements are identical\n");
     } else if (max_abs_diff < 1e-5) {
-        printf("  ✓ Very close! Max difference < 1e-5\n");
+        printf("  FAIL: bits differ (max numeric difference < 1e-5)\n");
     } else if (max_abs_diff < 1e-3) {
-        printf("  ⚠ Basically correct, but with small numerical differences\n");
+        printf("  FAIL: bits differ (max numeric difference < 1e-3)\n");
     } else {
         printf("  ✗ Large differences, potential issues\n");
     }
@@ -258,7 +259,9 @@ void print_compression_stats(int M, int K, int high_freq_count, int full_count,
         // (7 * sizeof(__nv_bfloat16)) +                    // High-freq exponents
         (high_freq_count * sizeof(uint8_t)) +            // High-freq elements
         (full_count * sizeof(__nv_bfloat16)) +           // Non-high-freq elements
-        (num_global_tiles * 64 * sizeof(uint64_t) * 3);      // Bitmap estimate
+        (num_global_tiles * 64 * sizeof(uint64_t) * 3) +
+        (num_global_tiles * 4 * 2 * sizeof(int)) +       // Median offsets
+        ((num_global_tiles + 1) * 2 * sizeof(int));      // Global offsets
     
     float compression_ratio = (float)original_size / compressed_size;
     printf("Compression ratio: %.2fx\n", compression_ratio);
@@ -695,6 +698,9 @@ int main(int argc, char** argv)
            100.0f * milliseconds_decompress / total_decompress_plus_matmul_tc,
            milliseconds_decompress, milliseconds_cublas_tc);
     
+    const bool exact_decompression = std::memcmp(
+        A_original, A_decompressed, size_t(M_GLOBAL) * K_GLOBAL * sizeof(__nv_bfloat16)) == 0;
+
     // ================== Cleanup Resources ==================
     printf("\nCleaning up resources...\n");
     
@@ -736,10 +742,10 @@ int main(int argc, char** argv)
     cudaEventDestroy(stop);
     
     printf("\n========== Test Complete ==========\n");
-    printf("Decompression test: If you see '✓ Perfect match' or '✓ Very close', the decompression is working correctly!\n");
+    printf("Bit-exact decompression: %s\n", exact_decompression ? "PASS" : "FAIL");
     printf("Performance test: Comparison analysis of decompression and matrix multiplication time completed\n");
     
-    return 0;
+    return exact_decompression ? 0 : 1;
 }
 
 

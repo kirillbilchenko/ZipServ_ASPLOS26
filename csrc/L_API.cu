@@ -1,3 +1,4 @@
+// Modified 2026 by Kyrylo Bilchenko: correctness and MxWave backports.
 /***************************************************************************
  * Copyright 2025 The ZipServ Authors. All rights reserved.
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -17,6 +18,7 @@
 #include <iostream>
 #include <string>
 #include <vector>
+#include "CodecUtils.h"
 
 cudaError_t LaunchKernelWithConfig_4Param(
     cudaStream_t stream,
@@ -29,7 +31,7 @@ cudaError_t LaunchKernelWithConfig_4Param(
 {
     using ConfigType = TilingConfigBF16TripleBitmap<4, 1, 1, 1>;
     
-    static int SHMEM_SZ = max(
+    const int SHMEM_SZ = max(
         (max_high_freq_count * sizeof(uint8_t)*2) + 
         (max_full_count * sizeof(__nv_bfloat16)*2) +
         (ConfigType::TILE_N * TILE_K * sizeof(__nv_bfloat16) * 2) + 
@@ -44,8 +46,10 @@ cudaError_t LaunchKernelWithConfig_4Param(
     // === Key modification: Choose Fast or Safe version based on N_Global ===
     if (N_Global % ConfigType::TILE_N2 == 0) {
         // N is a multiple of TILE_N, use Fast version
-        cudaFuncSetAttribute(BF16TripleBitmap_MM_Kernel_Fast<ConfigType>, 
-                           cudaFuncAttributeMaxDynamicSharedMemorySize, SHMEM_SZ);
+        const cudaError_t attribute_error = cudaFuncSetAttribute(
+            BF16TripleBitmap_MM_Kernel_Fast<ConfigType>,
+            cudaFuncAttributeMaxDynamicSharedMemorySize, SHMEM_SZ);
+        if (attribute_error != cudaSuccess) return attribute_error;
         BF16TripleBitmap_MM_Kernel_Fast<ConfigType><<<GridDim, BlockDim, SHMEM_SZ, stream>>>(
             SignMantissa, CompressedFull, Bitmap1, Bitmap2, Bitmap3,
             TileOffsets_Median, TileOffsets_Global,
@@ -53,8 +57,10 @@ cudaError_t LaunchKernelWithConfig_4Param(
             M_Global, N_Global, K_Global, Split_K);
     } else {
         // When N is not a multiple of TILE_N, use the Safe version
-        cudaFuncSetAttribute(BF16TripleBitmap_MM_Kernel_Safe<ConfigType>, 
-                           cudaFuncAttributeMaxDynamicSharedMemorySize, SHMEM_SZ);
+        const cudaError_t attribute_error = cudaFuncSetAttribute(
+            BF16TripleBitmap_MM_Kernel_Safe<ConfigType>,
+            cudaFuncAttributeMaxDynamicSharedMemorySize, SHMEM_SZ);
+        if (attribute_error != cudaSuccess) return attribute_error;
         BF16TripleBitmap_MM_Kernel_Safe<ConfigType><<<GridDim, BlockDim, SHMEM_SZ, stream>>>(
             SignMantissa, CompressedFull, Bitmap1, Bitmap2, Bitmap3,
             TileOffsets_Median, TileOffsets_Global,
@@ -77,7 +83,7 @@ cudaError_t LaunchKernelWithConfig_3Param(
 {
     using ConfigType = TilingConfigBF16TripleBitmap<4, 1, BLOCK_COL_WARPS>;
     
-    static int SHMEM_SZ = max(
+    const int SHMEM_SZ = max(
         (max_high_freq_count * sizeof(uint8_t)*2) + 
         (max_full_count * sizeof(__nv_bfloat16)*2) +
         (ConfigType::TILE_N * TILE_K * sizeof(__nv_bfloat16) * 2) + 
@@ -92,8 +98,10 @@ cudaError_t LaunchKernelWithConfig_3Param(
     // === Key modification: Choose Fast or Safe version based on N_Global ===
     if (N_Global % ConfigType::TILE_N == 0) {
         // N is a multiple of TILE_N, use Fast version
-        cudaFuncSetAttribute(BF16TripleBitmap_MM_Kernel_Fast<ConfigType>, 
-                           cudaFuncAttributeMaxDynamicSharedMemorySize, SHMEM_SZ);
+        const cudaError_t attribute_error = cudaFuncSetAttribute(
+            BF16TripleBitmap_MM_Kernel_Fast<ConfigType>,
+            cudaFuncAttributeMaxDynamicSharedMemorySize, SHMEM_SZ);
+        if (attribute_error != cudaSuccess) return attribute_error;
         BF16TripleBitmap_MM_Kernel_Fast<ConfigType><<<GridDim, BlockDim, SHMEM_SZ, stream>>>(
             SignMantissa, CompressedFull, Bitmap1, Bitmap2, Bitmap3,
             TileOffsets_Median, TileOffsets_Global,
@@ -101,8 +109,10 @@ cudaError_t LaunchKernelWithConfig_3Param(
             M_Global, N_Global, K_Global, Split_K);
     } else {
         // When N is not a multiple of TILE_N, use the Safe version
-        cudaFuncSetAttribute(BF16TripleBitmap_MM_Kernel_Safe<ConfigType>, 
-                           cudaFuncAttributeMaxDynamicSharedMemorySize, SHMEM_SZ);
+        const cudaError_t attribute_error = cudaFuncSetAttribute(
+            BF16TripleBitmap_MM_Kernel_Safe<ConfigType>,
+            cudaFuncAttributeMaxDynamicSharedMemorySize, SHMEM_SZ);
+        if (attribute_error != cudaSuccess) return attribute_error;
         BF16TripleBitmap_MM_Kernel_Safe<ConfigType><<<GridDim, BlockDim, SHMEM_SZ, stream>>>(
             SignMantissa, CompressedFull, Bitmap1, Bitmap2, Bitmap3,
             TileOffsets_Median, TileOffsets_Global,
@@ -133,6 +143,14 @@ cudaError_t BF16TripleBitmap_MM_API(
     __nv_bfloat16* Reduction_Workspace,   
     int Split_K)                          
 {
+    if (!zipserv::valid_gemm(M_Global, N_Global, K_Global, Split_K) ||
+        !zipserv::valid_counts(max_high_freq_count, max_full_count))
+        return cudaErrorInvalidValue;
+    if (N_Global == 0) return cudaSuccess;
+    if (!Bitmap1 || !Bitmap2 || !Bitmap3 || !TileOffsets_Median || !TileOffsets_Global ||
+        !B || !C || (max_high_freq_count && !SignMantissa) ||
+        (max_full_count && !CompressedFull) || (Split_K > 1 && !Reduction_Workspace))
+        return cudaErrorInvalidValue;
     __nv_bfloat16* OutputPTR;
     if (Split_K == 1)
         OutputPTR = C;
@@ -218,7 +236,7 @@ cudaError_t BF16TripleBitmap_MM_API(
     
     // If using Split-K, perform reduction
     if (Split_K > 1) {
-        dim3 GridDim((M_Global * N_Global) / 256, 1, 1);
+        dim3 GridDim((int64_t(M_Global) * N_Global + 255) / 256, 1, 1);
         dim3 BlockDim(WARP_SIZE, 1, 1);
         SplitK_Reduction_BF16<<<GridDim, BlockDim, 0, stream>>>(C, Reduction_Workspace, M_Global, N_Global, Split_K);
     }
@@ -247,7 +265,11 @@ cudaError_t BF16TripleBitmap_Decompress_API(
     const int K_Global)
 {
     // Validate input parameters
-    if (M_Global % 64 != 0 || K_Global % 64 != 0) {
+    if (!zipserv::valid_matrix(M_Global, K_Global) || M_Global / 64 > 65535 ||
+        !zipserv::valid_counts(max_high_freq_count, max_full_count) ||
+        !Bitmap1 || !Bitmap2 || !Bitmap3 || !TileOffsets_Median || !TileOffsets_Global ||
+        !Output || (max_high_freq_count && !SignMantissa) ||
+        (max_full_count && !CompressedFull)) {
         printf("Error: Matrix dimensions must be multiples of 64. Got M=%d, K=%d\n", M_Global, K_Global);
         return cudaErrorInvalidValue;
     }
@@ -290,9 +312,10 @@ cudaError_t BF16TripleBitmap_Decompress_API(
     //     (256 * (64+PADDING_SHARED_MEM_FOR_DECOMP) * sizeof(__nv_bfloat16)) + 
     //     256 * sizeof(uint8_t);               // decompression output buffer    
         // Set dynamic shared memory
-    cudaFuncSetAttribute(
-        BF16TripleBitmap_Decompress_Kernel<Config>, 
+    const cudaError_t attribute_error = cudaFuncSetAttribute(
+        BF16TripleBitmap_Decompress_Kernel<Config>,
         cudaFuncAttributeMaxDynamicSharedMemorySize, SHMEM_SZ);
+    if (attribute_error != cudaSuccess) return attribute_error;
     
     // printf("Launching decompress kernel with grid (%d, %d), block (%d), SHMEM=%d KB\n", 
     //        num_global_tiles_k, num_global_tiles_m, WARP_SIZE * 8, SHMEM_SZ / 1024);
@@ -330,6 +353,13 @@ __host__ int InitBF16MatrixTripleBitmap(
     int& max_high_freq_count,  // Return max high frequency element count
     int& max_full_count)       // Return max non-high frequency element count
 {
+    // The device layout is fixed; accepting other tiles silently changes the ABI.
+    if (!A_bf16 || !zipserv::valid_matrix(M, K) ||
+        tile_M != 8 || tile_K != 8 || tile_M_median != 16 || tile_K_median != 64 ||
+        tile_M_global != 64 || tile_K_global != 64 || !zipserv::valid_exponents(top_exponents) ||
+        !sign_mantissa || !compressed_full || !bitmap1 || !bitmap2 || !bitmap3 ||
+        !TileOffsets || !TileOffsets_median || !TileOffsets_global)
+        return -1;
     // Calculate number of tiles
     int num_tiles_M = M / tile_M;
     int num_tiles_K = K / tile_K;
@@ -547,8 +577,10 @@ __host__ int InitBF16MatrixTripleBitmap(
     }
     
     // Resize arrays
-    *sign_mantissa = (uint8_t*)realloc(*sign_mantissa, sign_mantissa_offset);
-    *compressed_full = (__nv_bfloat16*)realloc(*compressed_full, full_offset * sizeof(__nv_bfloat16));
+    if (void* resized = realloc(*sign_mantissa, std::max(1, sign_mantissa_offset)))
+        *sign_mantissa = static_cast<uint8_t*>(resized);
+    if (void* resized = realloc(*compressed_full, std::max(1, full_offset) * sizeof(__nv_bfloat16)))
+        *compressed_full = static_cast<__nv_bfloat16*>(resized);
     
     return num_global_tiles;
 }

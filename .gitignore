@@ -1,0 +1,13 @@
+*.o
+*.so
+*.dylib
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+.venv/
+kernel_benchmark/test_mm
+kernel_benchmark/test_decompress
+tests/test_cuda
+tests/test_codec_utils
+tools/profile_bf16

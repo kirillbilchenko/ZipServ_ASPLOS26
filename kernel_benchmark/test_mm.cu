@@ -1,9 +1,9 @@
+// Modified 2026 by Kyrylo Bilchenko: correctness and MxWave backports.
 #include <assert.h>
 #include <cublas_v2.h>
 #include <cuda.h>
 #include <cuda_bf16.h>
 #include <cuda_runtime.h>
-#include <cusparse_v2.h>
 #include <random>
 #include <stdio.h>
 #include <iomanip>
