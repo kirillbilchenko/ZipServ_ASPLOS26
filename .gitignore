@@ -16,3 +16,5 @@ tests/test_host_packer_sanitize
 tools/bench_host_packer
 tests/test_host_packer_tsan
 *.dSYM/
+build/libzipserv_cpu.json
+build/libzipserv_vllm.json

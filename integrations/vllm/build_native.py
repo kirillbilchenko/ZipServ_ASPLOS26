@@ -1,6 +1,6 @@
 # Copyright 2026 Kyrylo Bilchenko
 # SPDX-License-Identifier: Apache-2.0
-"""Build this checkout's Torch-ABI-independent CUDA bridge and record source hashes."""
+"""Build the Torch-ABI-independent CPU or CUDA bridge and record source hashes."""
 
 from __future__ import annotations
 
@@ -8,48 +8,78 @@ import argparse
 import hashlib
 import json
 import os
+import shlex
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 
 def main() -> None:
-    """Compile a library for an explicit GPU architecture without patching dependencies."""
+    """Build a CPU-only encoder or select an explicit CUDA architecture."""
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
-        "--arch", required=True, choices=["80", "86", "89", "90", "100", "120", "121"]
-    )
-    parser.add_argument("--output", type=Path, default=Path("build/libzipserv_vllm.so"))
+    mode = parser.add_mutually_exclusive_group(required=True)
+    mode.add_argument("--arch", choices=["80", "86", "89", "90", "100", "120", "121"])
+    mode.add_argument("--cpu-only", action="store_true")
+    parser.add_argument("--output", type=Path)
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[2]
-    cuda_path = os.environ.get("CUDA_PATH")
-    compiler = (
-        str(Path(cuda_path) / "bin/nvcc")
-        if cuda_path
-        else (shutil.which("nvcc") or "/usr/local/cuda/bin/nvcc")
-    )
-    output = args.output.resolve()
+    native = root / "integrations/vllm/native"
+    host = native / "host_bridge.cpp"
+    if args.cpu_only:
+        compiler = shlex.split(os.environ.get("CXX", "c++"))
+        suffix = ".dylib" if sys.platform == "darwin" else ".so"
+        default_output = Path("build/libzipserv_cpu" + suffix)
+        command = [
+            *compiler,
+            "-std=c++17",
+            "-O3",
+            "-dynamiclib" if sys.platform == "darwin" else "-shared",
+            "-fPIC",
+            "-pthread",
+            str(host),
+        ]
+        sources = [
+            host,
+            native / "host_bridge.h",
+            root / "csrc/HostPacker.h",
+            root / "csrc/CodecUtils.h",
+        ]
+    else:
+        cuda_path = os.environ.get("CUDA_PATH")
+        compiler = [
+            str(Path(cuda_path) / "bin/nvcc")
+            if cuda_path
+            else (shutil.which("nvcc") or "/usr/local/cuda/bin/nvcc")
+        ]
+        default_output = Path("build/libzipserv_vllm.so")
+        command = [
+            *compiler,
+            "-std=c++17",
+            "-O3",
+            "--shared",
+            "-Xcompiler=-fPIC,-pthread",
+            f"-gencode=arch=compute_{args.arch},code=sm_{args.arch}",
+            str(root / "csrc/L_API.cu"),
+            str(host),
+            str(native / "bridge.cu"),
+        ]
+        sources = sorted((root / "csrc").glob("*")) + [
+            root / "build/L_API.cuh",
+            host,
+            native / "host_bridge.h",
+            native / "bridge.cu",
+        ]
+    output = (args.output or default_output).resolve()
     output.parent.mkdir(parents=True, exist_ok=True)
-    bridge = root / "integrations/vllm/native/bridge.cu"
-    command = [
-        compiler,
-        "-std=c++17",
-        "-O3",
-        "--shared",
-        "-Xcompiler=-fPIC,-pthread",
-        f"-gencode=arch=compute_{args.arch},code=sm_{args.arch}",
-        str(root / "csrc/L_API.cu"),
-        str(bridge),
-        "-o",
-        str(output),
-    ]
+    command += ["-o", str(output)]
     subprocess.run(command, check=True)
-    sources = sorted((root / "csrc").glob("*")) + [root / "build/L_API.cuh", bridge]
     manifest = {
         "abi_version": 2,
+        "cuda": not args.cpu_only,
         "arch": args.arch,
         "command": command,
-        "compiler": subprocess.check_output([compiler, "--version"], text=True),
+        "compiler": subprocess.check_output([*compiler, "--version"], text=True),
         "sources_sha256": {
             str(path.relative_to(root)): hashlib.sha256(path.read_bytes()).hexdigest()
             for path in sources
