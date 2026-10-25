@@ -1,0 +1,23 @@
+The isolated FP4 scale-expansion experiment uses the Apache-2.0-licensed
+MxWave CT grouped-Marlin integration, Copyright MxWave contributors, as an
+explicit external build input. build_fp4_scale_expansion.py records and verifies
+the exact five input source hashes and recreates every staged source hash from
+the qualified CT build before applying its optional change.
+
+That integration adapts vLLM grouped Marlin at revision
+db9527a46873454610df6dbedf79a36d6bf1a7f6 under Apache-2.0:
+https://github.com/vllm-project/vllm
+Copyright (C) Marlin.2024 Elias Frantar
+Modified by Neural Magic
+Copyright contributors to the vLLM project
+Originally adapted from https://github.com/IST-DASLab/marlin
+
+Original notices are retained in staged files, together with the upstream
+Apache-2.0 LICENSE. ZipServ's optional affine byte expansion and experiment
+driver are Copyright 2026 Kyrylo Bilchenko, Apache-2.0 (repository LICENSE).
+The existing selector order and whole-vector exception format are unchanged.
+The optional final-prefetch guard removes a dead shared-B register load before
+the existing shared-memory reduction, identically in both rebuilt controls.
+The alternative reuse barrier orders all shared-B reads before that reduction
+overwrites the same storage, without adding a condition to the inner loop.
+No external source file or installed vLLM package is modified.

@@ -1,0 +1,16 @@
+{
+  "revision": "db9527a46873454610df6dbedf79a36d6bf1a7f6",
+  "license": "Apache-2.0",
+  "upstream": "https://github.com/vllm-project/vllm",
+  "files": {
+    "LICENSE": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
+    "csrc/libtorch_stable/moe/marlin_moe_wna16/kernel.h": "f6991bdd8bf5d2c180ebcb8f20c23f58e8de2d1a60507475d41f61eed2ca1de6",
+    "csrc/libtorch_stable/moe/marlin_moe_wna16/marlin_template.h": "20972ba8eed8d6b3d3ff258dae7c495a5085197482fcd237bf72b3e5ff748c41",
+    "csrc/libtorch_stable/moe/marlin_moe_wna16/ops.cu": "edbfdfdeed22baf84547311f3e1922bb914cf56cdddc29eba3ac25f9c6fe1bf0",
+    "csrc/core/scalar_type.hpp": "8d3671759c43a0219f51e3a1f32c94ef5d70ecc99e264100f4015a781d94bb99",
+    "csrc/libtorch_stable/quantization/marlin/marlin.cuh": "edaa19c541dfbe5e06e547c0be5bcdc1b78b4bbc68d596b72c41a932e2366926",
+    "csrc/libtorch_stable/quantization/marlin/marlin_dtypes.cuh": "15b90a65eadb200a3f7165e2e0d7d899f36d4993b20dbd89093ef2cea274da71",
+    "csrc/libtorch_stable/quantization/marlin/dequant.h": "39c4640d2de39374ef5d96e7fa27701a675922113c3f5b05d45369321090e728",
+    "csrc/libtorch_stable/quantization/marlin/marlin_mma.h": "bf863d252bfc468eaff42b2c1bda583c5e6ab97ceacf0ac248c164564ddcce9b"
+  }
+}

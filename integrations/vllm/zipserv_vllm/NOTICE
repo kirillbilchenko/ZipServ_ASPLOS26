@@ -6,3 +6,26 @@ operator names, native ABI v2, direct arbitrary-size batches, default
 configuration, stricter validation, and local-source builds.
 See integrations/vllm/source-provenance.json and integrations/vllm/README.md
 in the source repository for provenance and validation scope.
+
+The CPU rANS reference in low_precision_codec.py is adapted from MxWave's
+integrations/glm53_mxfp4/screen_mxfp4_entropy.py under Apache-2.0.
+It has been extended with independently decoded containers, palettes,
+canonical Huffman and exact vector dictionaries. See the accompanying
+compression-provenance.json for the source revision and hash.
+The optional scale cache uses a separately supplied MxWave native consumer;
+that consumer is not included in this package.
+
+The separate mxfp4_codec.py, mxfp4_runtime.py and mxfp4_backend.py adapt the
+Apache-2.0 MxWave scale palette, native interface and model integration,
+Copyright MxWave contributors. This standalone MXFP4 plugin has its own
+bundled native source under integrations/vllm/native/mxfp4 in the source
+repository. It adds the ZipServ namespace, explicit on/off controls, generic
+palette support, fallback and ownership checks, and a shared-memory reuse
+barrier. See mxfp4-provenance.json for exact source identities.
+
+The grouped Marlin native build also retains these upstream attributions:
+Copyright (C) Marlin.2024 Elias Frantar
+Modified by Neural Magic
+Copyright contributors to the vLLM project
+Originally adapted from https://github.com/IST-DASLab/marlin
+The pinned vLLM source and its Apache-2.0 LICENSE are retained in build outputs.

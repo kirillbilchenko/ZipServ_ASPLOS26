@@ -1,0 +1,27 @@
+{
+  "repository": "https://github.com/kirillbilchenko/mxstream",
+  "license": "Apache-2.0",
+  "native_snapshot": "qualified CT quality-best-v1, externally verified source hashes",
+  "native_files_sha256": {
+    "build_moe.py": "739b9369852f870003ba6abdc1ec96ada2fba318417886234c7f343b3efdd574",
+    "moe_bridge.cu": "cbc93a9737cc9f376cf4a0d96f4e70744327f412c1a7ced10daaf7e795584597",
+    "moe_scale_decode.cuh": "83aaf867c5190fd36206c99d41f31392a0f6fd1cb84853ea64dad8120ac86c71",
+    "moe_sparse_scales.cuh": "cd1eabe99c2ef423839eabc38b5d3fca995ede06dfb2848a12f82800f47b1296",
+    "moe_sources.json": "97972b9d24a08db12f4f759f904314262141eea63ad4a977eff34e088d0c8c10"
+  },
+  "python_sources": [
+    {
+      "path": "integrations/scale_tiles.py",
+      "sha256": "64238eefcd862059c0b3569981a480739603cf4d97308973537d158bb3257d97"
+    },
+    {
+      "path": "mxwave_glm53/_runtime/moe_runtime.py",
+      "sha256": "a4b10ac78bda7e97c998de8369d412ed1e59f4bc6013516a14e4a9c5d3dd2132"
+    },
+    {
+      "path": "mxwave_glm53/_runtime/model_plugin.py",
+      "sha256": "7d6a46744eed0919de27be8b8fd1090339334bcb251dbbe5b02f431431baa0c0"
+    }
+  ],
+  "modifications": "ZipServ namespace, bundled sparse codec/runtime, vLLM 0.32 opt-in controls, generic palette support, safe fallback and ownership diagnostics; shared-memory reuse barrier in the staged native source."
+}

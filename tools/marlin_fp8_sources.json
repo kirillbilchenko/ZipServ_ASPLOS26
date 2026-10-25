@@ -1,0 +1,23 @@
+{
+  "repository": "https://github.com/vllm-project/vllm",
+  "tag": "v0.32.0",
+  "revision": "5df63a7203cdb9328d824a27b682e77c7b9928be",
+  "license": "Apache-2.0",
+  "copyright": "Marlin.2024 Elias Frantar; Neural Magic; vLLM contributors",
+  "files": {
+    "LICENSE": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
+    "csrc/core/scalar_type.hpp": "8d3671759c43a0219f51e3a1f32c94ef5d70ecc99e264100f4015a781d94bb99",
+    "csrc/quantization/marlin/dequant.h": "39c4640d2de39374ef5d96e7fa27701a675922113c3f5b05d45369321090e728",
+    "csrc/quantization/marlin/generate_kernels.py": "19ac1b047792e1ba810739fb732f73143c367f76262595607db446f0c951e454",
+    "csrc/quantization/marlin/kernel.h": "484cdcce20793d67d3428d64704b0439210b300e03b335bca602c152e2ae1f96",
+    "csrc/quantization/marlin/marlin.cu": "a6e91b6281759b45fd9ca4e781889b072e2566f73612e13a1c0694d49d46bcc2",
+    "csrc/quantization/marlin/marlin.cuh": "edaa19c541dfbe5e06e547c0be5bcdc1b78b4bbc68d596b72c41a932e2366926",
+    "csrc/quantization/marlin/marlin_dtypes.cuh": "15b90a65eadb200a3f7165e2e0d7d899f36d4993b20dbd89093ef2cea274da71",
+    "csrc/quantization/marlin/marlin_mma.h": "bf863d252bfc468eaff42b2c1bda583c5e6ab97ceacf0ac248c164564ddcce9b",
+    "csrc/quantization/marlin/marlin_template.h": "972ffd66fdfb6781dad13daea1167981821a78b86a93d865baa2b3c3ed11cd19"
+  },
+  "runtime_helpers_sha256": {
+    "vllm/model_executor/layers/quantization/utils/marlin_utils_fp8.py": "a5cc60882dc32851b2cb7d573e2b28980319a99ef816fd6ed9925b6fabfffd9a",
+    "vllm/model_executor/layers/quantization/utils/marlin_utils.py": "e60713c15080347b01425f90eaf03840ca80a1cd226ec57e526e8f6286eeeb22"
+  }
+}

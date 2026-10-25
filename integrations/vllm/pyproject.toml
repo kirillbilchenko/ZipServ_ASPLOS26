@@ -5,17 +5,20 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "zipserv-vllm"
 version = "0.1.0"
-description = "Experimental lossless BF16 ZipServ plugin for vLLM 0.32.0"
+description = "Experimental lossless BF16 and MXFP4 scale compression for vLLM 0.32.0"
 requires-python = ">=3.12"
 license = "Apache-2.0"
 dependencies = ["vllm==0.32.0"]
 
 [project.entry-points."vllm.general_plugins"]
 zipserv = "zipserv_vllm:register"
+zipserv_scale_cache = "zipserv_vllm.scale_cache_plugin:register"
+zipserv_mxfp4_scales = "zipserv_vllm.mxfp4_plugin:register"
+zipserv_mixed_weights = "zipserv_vllm.mixed_plugin:register"
 
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["zipserv_vllm*"]
 
 [tool.setuptools.package-data]
-zipserv_vllm = ["LICENSE", "NOTICE"]
+zipserv_vllm = ["LICENSE", "NOTICE", "compression-provenance.json", "mxfp4-provenance.json"]
