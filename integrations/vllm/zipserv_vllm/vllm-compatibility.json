@@ -1,0 +1,105 @@
+{
+  "format": "zipserv-vllm-compatibility-v1",
+  "note": "Source contracts; see README for actual GPU qualification. Unknown forks fail closed.",
+  "adapters": {
+    "bf16": [
+      "model_executor/layers/linear.py",
+      "model_executor/layers/quantization/base_config.py",
+      "model_executor/layers/fused_moe/router/gate_linear.py",
+      "model_executor/parameter.py",
+      "model_executor/utils.py",
+      "model_executor/layers/quantization/__init__.py",
+      "config/compilation.py",
+      "config/scheduler.py"
+    ],
+    "hybrid": [
+      "model_executor/layers/quantization/compressed_tensors/compressed_tensors.py",
+      "model_executor/layers/vocab_parallel_embedding.py"
+    ],
+    "mxfp4": [
+      "_custom_ops.py",
+      "model_executor/layers/quantization/compressed_tensors/compressed_tensors_moe/compressed_tensors_moe_w4a4_mxfp4.py",
+      "model_executor/layers/fused_moe/experts/marlin_moe.py",
+      "model_executor/layers/quantization/utils/marlin_utils_fp4.py"
+    ],
+    "nvfp4": [
+      "_custom_ops.py",
+      "model_executor/layers/quantization/modelopt.py",
+      "model_executor/layers/fused_moe/experts/marlin_moe.py",
+      "model_executor/layers/fused_moe/oracle/nvfp4.py",
+      "model_executor/layers/quantization/utils/marlin_utils_fp4.py"
+    ],
+    "mixed_bf16": [
+      "model_executor/layers/linear.py",
+      "model_executor/layers/fused_moe/router/gate_linear.py",
+      "model_executor/layers/vocab_parallel_embedding.py",
+      "v1/worker/gpu_worker.py"
+    ],
+    "mixed_fp8": [
+      "_custom_ops.py",
+      "model_executor/kernels/linear/mxfp8/marlin.py",
+      "model_executor/layers/quantization/utils/marlin_utils_fp8.py",
+      "model_executor/layers/quantization/utils/marlin_utils.py",
+      "v1/worker/workspace.py",
+      "model_executor/layers/quantization/compressed_tensors/schemes/compressed_tensors_w8a8_mxfp8.py"
+    ]
+  },
+  "releases": {
+    "0.31.0": {
+      "commit": "db9527a46873454610df6dbedf79a36d6bf1a7f6",
+      "source_url": "https://github.com/vllm-project/vllm/tree/db9527a46873454610df6dbedf79a36d6bf1a7f6",
+      "sha256": {
+        "_custom_ops.py": "0232f889f5645c0e17bd368e480dc84a7e711e7436183653684803575b91076b",
+        "config/compilation.py": "9e005aee4e8d74b23636312e9c9be796d8fc3b43ce483937cf3795fcbcaf18e5",
+        "config/scheduler.py": "82bc6805ecf30a9b3d1b678d3270dad919abed011782ad16f1e805a78aa6c241",
+        "model_executor/kernels/linear/mxfp8/marlin.py": "299c549e3e3830fe3b52ef83eca565356d6bd42e2a85805300a1bd0fe6a67e0c",
+        "model_executor/layers/fused_moe/experts/marlin_moe.py": "e048731e130ecc3100be0ab4a168777a7697131b41538f9d9b6a73c4f66e14ff",
+        "model_executor/layers/fused_moe/oracle/nvfp4.py": "4077a93f46c913d663de4483866ea477cf10f760f0b248d463b5993202a7871f",
+        "model_executor/layers/fused_moe/router/gate_linear.py": "19191d160cb48d79508eb822db795ffe638268f2c585eaffda05966e47b78252",
+        "model_executor/layers/linear.py": "7a9b90937865fa35d955ffc2017f23d3997bc4fba954e2667870b1b4854a38e0",
+        "model_executor/layers/quantization/__init__.py": "d7656bbd3c34acc5df276cb99c72e96783c343c2751f7650107f035afbe8c295",
+        "model_executor/layers/quantization/base_config.py": "17c17fcf0d20458a969213d6a2c04dbe6491b49ab41c38f1a2dc5d4b61c947f1",
+        "model_executor/layers/quantization/compressed_tensors/compressed_tensors.py": "e30bb40ecbfa2a021889e2eed5755cc8180bc7932069d43c037cc12c51fd944d",
+        "model_executor/layers/quantization/compressed_tensors/compressed_tensors_moe/compressed_tensors_moe_w4a4_mxfp4.py": "348c81e19ba27cf1283d72a3c1f7639faaedd92b62062e649d250b636308b8ba",
+        "model_executor/layers/quantization/compressed_tensors/schemes/compressed_tensors_w8a8_mxfp8.py": "ec5de2adc6b7452377a08e685522224aee8c345dc3312fb15cece662b40d3a60",
+        "model_executor/layers/quantization/modelopt.py": "ee775557913fbc790388138f64ef595fa61f16c79e10901c4a924a71214a12d0",
+        "model_executor/layers/quantization/utils/marlin_utils.py": "e60713c15080347b01425f90eaf03840ca80a1cd226ec57e526e8f6286eeeb22",
+        "model_executor/layers/quantization/utils/marlin_utils_fp4.py": "7c863610b4b9c2f22e84d8690628c763bd0c81aa800b9b51e4c610a37427ee14",
+        "model_executor/layers/quantization/utils/marlin_utils_fp8.py": "a5cc60882dc32851b2cb7d573e2b28980319a99ef816fd6ed9925b6fabfffd9a",
+        "model_executor/layers/vocab_parallel_embedding.py": "01576027a0262d2135800aab0ddb2fe2701fae2177c33f8ad2426240b6e04073",
+        "model_executor/parameter.py": "1a4bbd7400fd1ba79e8e1e8d19666cd22881ec83c35e6e01b3fdc78faee23171",
+        "model_executor/utils.py": "9d7d6bee0331cbac232a0f542096d779e28a7c158d092afe3756317395f4b46d",
+        "v1/worker/gpu_worker.py": "43bd01925cd84f7d8a1d4a2ec30e289014a485fe4492a5343cbc893e8ed2f518",
+        "v1/worker/workspace.py": "07bcaea79e568a48be9c2415163b31e6605f5670f776d54d5a7cca47bddb57b2"
+      }
+    },
+    "0.32.0": {
+      "commit": "5df63a7203cdb9328d824a27b682e77c7b9928be",
+      "source_url": "https://github.com/vllm-project/vllm/tree/5df63a7203cdb9328d824a27b682e77c7b9928be",
+      "sha256": {
+        "_custom_ops.py": "36428c27bad9bf5ffe5debf9e34bccbc888adb68ad3eb972f6c9ff080e7f683e",
+        "config/compilation.py": "d8a8086166e3f344b75d98d8350a77592f7b6c145319b3a9f0b9c8cb36bc39cb",
+        "config/scheduler.py": "2fb86b1572a4925be59f304d13b4f6ec03d496b67a7c4abbb976ecda2232839a",
+        "model_executor/kernels/linear/mxfp8/marlin.py": "299c549e3e3830fe3b52ef83eca565356d6bd42e2a85805300a1bd0fe6a67e0c",
+        "model_executor/layers/fused_moe/experts/marlin_moe.py": "e048731e130ecc3100be0ab4a168777a7697131b41538f9d9b6a73c4f66e14ff",
+        "model_executor/layers/fused_moe/oracle/nvfp4.py": "7508ae9c8cc248ee14e664ec51481bb10ba38e3891e2e4a5e509be13198e5fab",
+        "model_executor/layers/fused_moe/router/gate_linear.py": "41adaba8228b0efc9b99c4851cac30c9785380192091f2a793d7eea4f467ca63",
+        "model_executor/layers/linear.py": "7a9b90937865fa35d955ffc2017f23d3997bc4fba954e2667870b1b4854a38e0",
+        "model_executor/layers/quantization/__init__.py": "d7656bbd3c34acc5df276cb99c72e96783c343c2751f7650107f035afbe8c295",
+        "model_executor/layers/quantization/base_config.py": "b4f0d3f05648d1662c660e8f9193ba3f6f641b35728a274915a1b2eb7eb07f37",
+        "model_executor/layers/quantization/compressed_tensors/compressed_tensors.py": "4832a1ba12f4619f65e5526cba8b7319a0f3d464af0014ddc0260d5f0eeb5ed1",
+        "model_executor/layers/quantization/compressed_tensors/compressed_tensors_moe/compressed_tensors_moe_w4a4_mxfp4.py": "c26a798139a6a24ae7802ae5e5c8cca180d8a3ad75ad1c06b0e69062d47d8eef",
+        "model_executor/layers/quantization/compressed_tensors/schemes/compressed_tensors_w8a8_mxfp8.py": "ec5de2adc6b7452377a08e685522224aee8c345dc3312fb15cece662b40d3a60",
+        "model_executor/layers/quantization/modelopt.py": "4c47880b069b517e10d0b6d7167d98bcf8ff6f52e15cd8e1c973490fb2fefb10",
+        "model_executor/layers/quantization/utils/marlin_utils.py": "e60713c15080347b01425f90eaf03840ca80a1cd226ec57e526e8f6286eeeb22",
+        "model_executor/layers/quantization/utils/marlin_utils_fp4.py": "7c863610b4b9c2f22e84d8690628c763bd0c81aa800b9b51e4c610a37427ee14",
+        "model_executor/layers/quantization/utils/marlin_utils_fp8.py": "a5cc60882dc32851b2cb7d573e2b28980319a99ef816fd6ed9925b6fabfffd9a",
+        "model_executor/layers/vocab_parallel_embedding.py": "10e17024bd5a5915e0d486e7a78a96d62e77bce803e1afd27feae7ad2042edc0",
+        "model_executor/parameter.py": "1a4bbd7400fd1ba79e8e1e8d19666cd22881ec83c35e6e01b3fdc78faee23171",
+        "model_executor/utils.py": "9d7d6bee0331cbac232a0f542096d779e28a7c158d092afe3756317395f4b46d",
+        "v1/worker/gpu_worker.py": "e970aa29a738aa15cd963d9f9202ca6d3d504e98fd344959fd998e940472a5a0",
+        "v1/worker/workspace.py": "bcf9ea207279c38a476be4ca74137a9d3a973f1fd97d85639a383357f881eb06"
+      }
+    }
+  }
+}

@@ -17,6 +17,14 @@
 #include <inttypes.h>
 #define __STDC_FORMAT_MACROS
 
+template<typename OutputType>
+__device__ __forceinline__ OutputType zipserv_partial(float value) { return value; }
+
+template<>
+__device__ __forceinline__ __nv_bfloat16 zipserv_partial<__nv_bfloat16>(float value) {
+    return __float2bfloat16_rn(value);
+}
+
 
 __device__ __forceinline__ void LoadBF16FragWithTripleBitmap_Optimized(  // good version
     uint32_t __restrict__ a[][4],
@@ -227,7 +235,13 @@ __device__ __forceinline__ void LoadBF16FragWithTripleBitmap_SingleRow(
             a_row[j] = *reinterpret_cast<const uint32_t*>(&bf16_pair);
             
             // Update starting positions (accumulate to reference parameters)
+            // Each lane has the same complete 64-bit indicator. The optional
+            // variant replaces only the total-count broadcast, not prefix ranks.
+#ifdef ZIPSERV_EXPERIMENT_POPCOUNT
+            int num_high_freq = __popcll(high_freq_indicator);
+#else
             int num_high_freq = __shfl_sync(0xffffffff, num_high_freq_lane_31, 31);
+#endif
             int num_full = 64 - num_high_freq;
             full_start += num_full;
             high_freq_start += num_high_freq;
@@ -293,7 +307,7 @@ __device__ __forceinline__ void LoadNextSlice(
 }
 
 // 3. Modified main kernel function with fine-grained interleaving
-template<typename TilingConfig>
+template<typename TilingConfig, typename OutputType = __nv_bfloat16>
 __global__ void BF16TripleBitmap_MM_Kernel_Fast(
     const uint8_t* SignMantissa,
     const __nv_bfloat16* CompressedFull,
@@ -306,7 +320,7 @@ __global__ void BF16TripleBitmap_MM_Kernel_Fast(
     const int max_full_count,
     const uint8_t start_exp,
     const __nv_bfloat16* B,
-    __nv_bfloat16* Output,
+    OutputType* Output,
     const int M_Global,
     const int N_Global,
     const int K_Global,
@@ -574,17 +588,17 @@ __global__ void BF16TripleBitmap_MM_Kernel_Fast(
     StoreToSharedMemoryFromRegisterBitmapV3<TilingConfig>(smem_CFrag, c);
     __syncthreads();
     
-    __nv_bfloat16* OutputPTR = Output + BatchID * (M_Global * N_Global) + Tile_Start_M + Tile_Start_N * M_Global;
+    OutputType* OutputPTR = Output + BatchID * (M_Global * N_Global) + Tile_Start_M + Tile_Start_N * M_Global;
     
     #pragma unroll
     for (int i = warpId; i < TilingConfig::TILE_N2; i += TilingConfig::BLOCK_WARPS)
         #pragma unroll
         for (int j = threadIdx.x % WARP_SIZE; j < TilingConfig::TILE_M; j += WARP_SIZE)
-            OutputPTR[j + i * M_Global] = __float2bfloat16_rn((*(smem_CFrag + i))[j]);
+            OutputPTR[j + i * M_Global] = zipserv_partial<OutputType>((*(smem_CFrag + i))[j]);
 }
 
 // 3. Modify the main kernel for fine-grained interleaving
-template<typename TilingConfig>
+template<typename TilingConfig, typename OutputType = __nv_bfloat16>
 __global__ void BF16TripleBitmap_MM_Kernel_Safe(
     const uint8_t* SignMantissa,
     const __nv_bfloat16* CompressedFull,
@@ -597,7 +611,7 @@ __global__ void BF16TripleBitmap_MM_Kernel_Safe(
     const int max_full_count,
     const uint8_t start_exp,
     const __nv_bfloat16* B,
-    __nv_bfloat16* Output,
+    OutputType* Output,
     const int M_Global,
     const int N_Global,
     const int K_Global,
@@ -888,7 +902,7 @@ __global__ void BF16TripleBitmap_MM_Kernel_Safe(
     __syncthreads();
     
     // At the kernel's final write-back section:
-    __nv_bfloat16* OutputPTR = Output + BatchID * (M_Global * N_Global) + Tile_Start_M + Tile_Start_N * M_Global;
+    OutputType* OutputPTR = Output + BatchID * (M_Global * N_Global) + Tile_Start_M + Tile_Start_N * M_Global;
 
     // === Fix: write back only the required columns ===
     int actual_cols = min(TilingConfig::TILE_N, N_Global - Tile_Start_N);
@@ -897,7 +911,7 @@ __global__ void BF16TripleBitmap_MM_Kernel_Safe(
     for (int i = warpId; i < actual_cols; i += TilingConfig::BLOCK_WARPS)
         #pragma unroll
         for (int j = threadIdx.x % WARP_SIZE; j < TilingConfig::TILE_M; j += WARP_SIZE)
-            OutputPTR[j + i * M_Global] = __float2bfloat16_rn((*(smem_CFrag + i))[j]);
+            OutputPTR[j + i * M_Global] = zipserv_partial<OutputType>((*(smem_CFrag + i))[j]);
 }
 
 

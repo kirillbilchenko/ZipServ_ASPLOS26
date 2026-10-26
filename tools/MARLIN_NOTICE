@@ -1,0 +1,19 @@
+The isolated FP8 Marlin experiment stages and modifies selected files from
+https://github.com/vllm-project/vllm at v0.32.0, revision
+5df63a7203cdb9328d824a27b682e77c7b9928be, under the Apache License, Version 2.0.
+
+Copyright (C) Marlin.2024 Elias Frantar
+Modified by Neural Magic
+Copyright contributors to the vLLM project
+Originally adapted from https://github.com/IST-DASLab/marlin
+
+ZipServ modifications, Copyright 2026 Kyrylo Bilchenko:
+optional lossless ZFR1 weight loads and ZFA1 asynchronous compressed staging,
+shared-memory metadata accounting, optional direct packed-code conversion to
+BF16 with the original bias multiply, restricted MXFP8 dispatch, isolated
+native ABI, build provenance, validation and benchmark harnesses. The original
+matrix arithmetic, scheduling, group scaling and reduction code is preserved.
+
+See marlin_fp8_sources.json for exact source hashes. The builder retains
+upstream notices and copies the upstream Apache-2.0 LICENSE into its output.
+ZipServ's additions are also Apache-2.0; see the repository LICENSE.

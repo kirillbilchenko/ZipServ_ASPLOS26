@@ -1,0 +1,11 @@
+{
+  "license": "Apache-2.0 (repository LICENSE)",
+  "copyright": "2026 Kyrylo Bilchenko",
+  "adapted_source": {
+    "project": "MxWave",
+    "revision": "2d507b468773c7531193a0ede109ddb55c60abec",
+    "path": "integrations/glm53_mxfp4/screen_mxfp4_entropy.py",
+    "sha256": "e4b74e55c7fac74179514c55e03196297a9d669ad637b239dbcbf539aeb382b1",
+    "scope": "Independent CPU rANS reference and bounded safetensors sampling approach. Extended with standalone block serialization, exact dictionaries, palettes, canonical Huffman and measured tradeoff policies. No GPU decoder or published paper implementation copied."
+  }
+}

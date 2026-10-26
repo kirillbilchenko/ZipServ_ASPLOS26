@@ -18,3 +18,7 @@ tests/test_host_packer_tsan
 *.dSYM/
 build/libzipserv_cpu.json
 build/libzipserv_vllm.json
+# Large experiment artifacts are retained and verified separately on Spark2.
+/docs/evidence/
+/integrations/vllm/build/
+/integrations/vllm/dist/

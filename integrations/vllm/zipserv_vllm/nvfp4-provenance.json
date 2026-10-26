@@ -1,0 +1,13 @@
+{
+  "repository": "https://github.com/kirillbilchenko/mxstream",
+  "revision": "2d507b468773c7531193a0ede109ddb55c60abec",
+  "license": "Apache-2.0",
+  "source_directory": "integrations/glm53_nvfp4",
+  "original_files_sha256": {
+    "build.py": "4a92d6be1109f941d785b6deec8492e7add16335ae4ed7b11564aeb96473cc6b",
+    "bridge.cu": "451d2183d9835adc1b940d0079aae691829859cf7df7197302013b6234ed0bce",
+    "scale_decode.cuh": "8a9ba0b17355d6ef43c4ba9cf1c8bb0fa05a21b445056d8c5c354d8f00184fd5"
+  },
+  "codec_source_sha256": "4eba42ab96307660ea6150f5aa6446eea4560d8446b49b10649e9fb990913216",
+  "modifications": "ZipServ namespace and ABI; current-device handling; shared-memory reuse barrier; bounded CPU packing and exact ownership; model-independent layout eligibility; reviewed vLLM API profiles."
+}

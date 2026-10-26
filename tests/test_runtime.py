@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import sys
+from types import SimpleNamespace
 from pathlib import Path
 
 import pytest
@@ -52,7 +53,8 @@ def test_storage_accounts_for_all_buffers():
 
 
 @pytest.mark.parametrize("shape", [(128,), (0, 128), (2, 3, 128), (129, 128)])
-def test_fake_shape_contract(shape):
+@pytest.mark.parametrize("partial_dtype", ["bf16", "fp32"])
+def test_fake_shape_contract(shape, partial_dtype):
     from torch._subclasses.fake_tensor import FakeTensorMode
 
     with FakeTensorMode():
@@ -65,7 +67,22 @@ def test_fake_shape_contract(shape):
             0,
             120,
         )
-        output = runtime.linear(x, packed)
+        output = runtime.linear(x, packed, partial_dtype=partial_dtype)
         assert output.shape == (*shape[:-1], 256)
         assert output.dtype == x.dtype
         assert output.device == x.device
+
+
+def test_fp32_extension_rejects_an_old_cuda_bridge(monkeypatch):
+    monkeypatch.setattr(runtime, "_cuda_library", lambda: SimpleNamespace(zipserv_mm=object()))
+    with pytest.raises(RuntimeError, match="zipserv_mm_fp32"):
+        runtime.require_fp32_partials()
+
+
+def test_decode_budget_rejects_before_cuda_or_allocation():
+    packed = runtime.PackedWeight(tuple(torch.empty(0, dtype=torch.uint8) for _ in range(7)),
+                                  57344, 8192, 4096, 0, 120)
+    with pytest.raises(ValueError, match="allocation budget"):
+        runtime.decompress(packed, max_bytes=256 * 2**20)
+    with pytest.raises(ValueError, match="nonnegative integer"):
+        runtime.decompress(packed, max_bytes=True)
