@@ -80,15 +80,20 @@ plugin adapted from MxWave. See the
 Reviewed source profiles cover vLLM 0.31.0 and 0.32.0; GPU serving results are
 specific to 0.32.0. On two GB10s with stock vLLM and DFlash2, additional packing
 saved **10.260 GiB for CT MXFP4** and **10.682 GiB for revised NVIDIA NVFP4**,
-each against the same checkpoint without ZipServ packing. The revised NVIDIA
-arm adds its BF16 head with Split-K 1. The subsequent padding fix retains this
-head path and removes the wider prefill tile after retesting. Against
-a refreshed stock control, single-request changes ranged from −1.1% to +8.6%
-and concurrent throughput from +0.6% to +6.3%. The stock repeat itself varied
-by up to 11.2%, and one concurrency case regressed versus the earlier compressed
-build. These are opt-in memory savings with measured trade-offs, not a proven
-general speedup or a quality-equivalence result. See the
+each against the same checkpoint without ZipServ packing and with fixed KV
+budgets. The final NVIDIA path retains BF16 head compression and the row-padding
+fix; the wider prefill tile was removed after retesting. Paired full-model
+prefill measurements did not establish a reliable speedup. See the
 [matched results and controls](integrations/vllm/README.md#stock-vllm--dflash2-results-2026-10-26).
+
+Using the saved memory for **9 instead of 4 GiB of KV per GPU** removed observed
+capacity queueing at 4–6 concurrent requests. First-token p90 fell from
+24.5–51.1 seconds to 1.2–2.4 seconds, at 188.243 GiB of total live CUDA
+allocation—slightly below the uncompressed 4-GiB control's 188.667 GiB.
+Aggregate throughput changed by −1.9% to +20.2%; individual streams decoded
+more slowly at higher concurrency. This is one capacity screen, not a general
+speedup or quality-equivalence result. See the
+[KV capacity comparison and trade-offs](integrations/vllm/README.md#using-the-saved-memory-for-kv).
 
 For the GLM CT experiments, start with
 [what the current CT results mean](integrations/vllm/README.md#what-the-current-ct-results-mean).

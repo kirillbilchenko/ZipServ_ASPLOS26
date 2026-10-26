@@ -20,8 +20,10 @@ The revised BF16/head/scale arm saved **10.682 GiB across two GPUs**. Against
 a refreshed stock control, single-request decode ranged from −1.1% to +8.6%
 and concurrent throughput from +0.6% to +6.3%. The original comparison included
 a 16.4% slowdown, and the repeated stock control itself varied by up to 11.2%.
-These screens do not establish a reliable general speedup. The adapters stay
-opt-in; no quality-equivalence or production-throughput claim follows.
+These fixed-KV screens do not establish a reliable general speedup. Spending
+the saved memory on KV subsequently reduced capacity queueing at 4–6 requests;
+see the [KV capacity comparison](#using-the-saved-memory-for-kv). The adapters
+stay opt-in; no quality-equivalence or production-throughput claim follows.
 See the [matched stock-runtime results](#stock-vllm--dflash2-results-2026-10-26)
 and [NVFP4 controls](#experimental-nvfp4-scale-controls).
 
@@ -67,9 +69,10 @@ NVIDIA concurrent aggregate throughput, three rounds per level:
 | 5 | 50.08 | 46.83 | −6.5% | 29.12 / 30.77 |
 | 6 | 53.96 | 55.72 | +3.3% | 48.71 / 51.09 |
 
-The fixed KV pool causes queueing above about three active short requests;
-the saved weight memory was not reassigned to KV. Prompt mixes differ across
-levels, so compare within a row. At C3, draft acceptance also changed from
+In this initial screen, the fixed KV pool caused queueing above about three
+active short requests; saved weight memory was not reassigned to KV. The later
+capacity experiment below tests that use of the savings. Prompt mixes differ
+across levels, so compare within a row. At C3, draft acceptance also changed from
 50.38% to 46.75%. BF16 Split-K rounding and generated outputs can differ despite
 exact weight reconstruction; this test does not isolate decoder cost from
 changed speculation. BF16-only and scale-only comparisons remain follow-up work.
@@ -157,8 +160,8 @@ The earlier experimental `--experiment-wide-prefill` build used a 160-token tile
 for 129–160 tokens with at least 4,096 weight rows and Split-K 1.
 It decoded each weight tile once for that token range. On a real 12,576 × 4,096
 projection (padded to 12,608 rows), paired component timing at 147 tokens was
-29–43% faster than the current fused path on the two GB10s, while still slower
-than dense GEMM. Other token ranges retained the existing kernel. Native checks
+29–43% faster than the fused path at that time on the two GB10s, while still
+slower than dense GEMM. Other token ranges retained the existing kernel. Native checks
 covered both tile boundaries, output guards, nondefault streams and graph replay;
 Compute Sanitizer reported zero errors. The tile was removed after the padding
 fix eliminated its aggregate benefit; see the follow-up below.
@@ -202,14 +205,15 @@ ranged from −1.1% to +8.6%. These are noninterleaved screens with one load per
 arm, not a statistical speed qualification. The stock C3 result alone changed
 from 48.33 to 42.91 tokens/s between runs (−11.2%); the revised 44.55 lies between
 them. Draft acceptance and output lengths can change with GEMM rounding.
-The fixed KV budget still causes queueing at higher concurrency. No freed
-memory was reassigned to KV, and this was not a GSM8K or quality-equivalence test.
+That fixed-KV comparison still queued requests at higher concurrency. No freed
+memory was reassigned to KV in those arms; the later capacity experiment tests
+that separately. This was not a GSM8K or quality-equivalence test.
 
 Final C1 and steady-C3 traces matched the earlier scheduled token counts and
 confirmed the compressed head executing inside CUDA graphs. The revised mixed
 C3 trace instead scheduled 163 prefill plus eight decode tokens, versus
-139 plus eight previously. Its 171-token step is outside the new 129–160-token
-tile range and used the existing kernel. That prefill trace is not a matched
+139 plus eight previously. Its 171-token step was outside the experimental
+129–160-token tile range and used the existing kernel. That prefill trace is not a matched
 timing comparison: the wider tile's gain remains component evidence, and the
 whole-serving changes cannot be attributed to it. Profiling left live allocation
 unchanged and its observation hooks were restored afterward.
@@ -260,9 +264,13 @@ All 54 pairs generated the same token. Full-model log probabilities varied
 even under unchanged settings, so an initial strict score-equality check was
 retained as a stopped attempt. Separate observed requests compared both packed
 variants on the *same live activations*: all 34 affected layers per rank were
-byte-identical at 147 and 171 tokens, in both arms (272 comparisons). This is
-not a model-quality benchmark. All control buffers were released afterward,
-with live CUDA allocation returning exactly to its pre-comparison value.
+byte-identical at 147 and 171 tokens, in both arms (272 comparisons). Score drift
+is retained rather than treated as bit-exact: the largest paired log-probability
+difference was 0.115 at 512 tokens, where unchanged-arm repetitions spanned up
+to 0.091. Other prompt sizes had maximum paired differences below 0.00014.
+These observations do not establish model-quality equivalence. All control
+buffers were released afterward, with live CUDA allocation returning exactly
+to its pre-comparison value.
 Repacking the same weights saved another 4.152 MiB per rank in payload bytes;
 the purpose of this change is lower decoder overhead, not substantial new
 compression. The full 93-request serving regression passed with no failures or
@@ -279,6 +287,57 @@ tile and its build flag were removed; the head compression and padding fix stay.
 Retained evidence: `nvfp4-prefill-20261026/padding-r{0,1}.json`,
 `prefill-comparison.json`, `prefill-paired-initial.json`, and the exact-shard
 and nearby-shape screens. They remain in separate experiment backups.
+
+### Using the saved memory for KV
+
+The final head/padding implementation was tested with **4 versus 9 GiB of KV
+per rank**, raising `max_num_seqs` from 32 to 64. Both arms used the same NVIDIA
+checkpoint, stock vLLM 0.32.0, TP2, FP8 KV, five-layer DFlash2, 32K context,
+2,048 batched-token budget and decode graph sizes. The speculative-token policy
+was unchanged through 32 sequences; its last range was extended through 64.
+Both sequence limits already exceeded the tested concurrency. The final native
+binary matched the tested default-tile control, and the baseline's previously
+captured decode functions had identical CUDA instructions.
+
+Each arm ran the same pinned public harness at 4, 5 and 6 requests, with three
+rounds per level and separate warmups. This is one ordered model load per
+configuration, not an interleaved or statistical throughput qualification.
+
+| Concurrent requests | Aggregate tokens/s, 4 / 9 GiB | Change | First-token p90, seconds, 4 / 9 GiB | Per-stream decode tokens/s, 4 / 9 GiB |
+|---|---:|---:|---:|---:|
+| 4 | 64.78 / 63.58 | −1.9% | 24.52 / 1.99 | 23.62 / 23.13 |
+| 5 | 46.74 / 56.18 | +20.2% | 29.79 / 2.35 | 22.94 / 17.94 |
+| 6 | 54.32 / 57.36 | +5.6% | 51.06 / 1.21 | 23.65 / 15.89 |
+
+Aggregate rates are medians of three waves; per-stream rates are medians of
+12–18 requests. The harness records summaries, so these are not paired confidence
+intervals. Outputs, lengths and draft acceptance can change with active batch
+size. At five and six requests, individual decode streams slowed by about 22%
+and 33%, respectively, while admission waits fell substantially. More concurrent
+work does not make each stream decode faster.
+
+One-second scheduler samples, including warmups, observed at most three running
+requests and up to three capacity-waiting requests with 4 GiB. Peak KV use was
+93.1%. With 9 GiB, all six requests ran simultaneously, no waiting was observed,
+and peak KV use was 81.8%. vLLM's startup capacity report rose from 68,656 to
+155,257 tokens; the harness's simpler `num_gpu_blocks * block_size` field is not
+used as a capacity estimate for this hybrid KV layout.
+
+The 9-GiB configuration used **188.243 GiB of live CUDA allocations across both
+GPUs**, versus 177.954 GiB for the compressed 4-GiB control. The 10.288-GiB
+increase includes 10 GiB of additional KV plus other configuration/allocation
+overhead. It remains below the earlier uncompressed 4-GiB control's 188.667 GiB.
+This demonstrates useful capacity at approximately the same live-memory budget;
+it does not establish that a larger uncompressed KV configuration could never fit.
+
+The practical benefit in this screen is much shorter first-token waiting under
+capacity pressure. Throughput gains are workload-dependent, and there is a
+per-stream decode trade-off. This is not a GSM8K or quality-equivalence test.
+Both arms completed 45 measured requests with zero failures or preemptions.
+Before/after reconstruction, coverage and ownership audits passed; live
+allocation was unchanged within each arm. Installed package files and the
+final native-library hash were verified on both ranks. Completed results,
+commands, scheduler samples and audit archives are retained separately.
 
 ## What the current CT results mean
 
