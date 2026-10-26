@@ -154,6 +154,18 @@ cudaError_t DispatchBF16Kernel(
             max_high_freq_count, max_full_count, start_exp, B, OutputPTR,
             M_Global, N_Global, K_Global, Split_K);
     }
+#ifdef ZIPSERV_EXPERIMENT_WIDE_PREFILL
+    else if (N_Global > 128 && N_Global <= 160 && M_Global >= 4096 && Split_K == 1) {
+        // Reuse each decoded weight tile across 160 tokens. This avoids the
+        // second 128-token block for short prefills without materializing a
+        // full dense weight. Restrict this experiment to shapes with enough
+        // row blocks; wider register tiles need independent qualification.
+        error = LaunchKernelWithConfig_3Param<10>(stream, SignMantissa, CompressedFull,
+            Bitmap1, Bitmap2, Bitmap3, TileOffsets_Median, TileOffsets_Global,
+            max_high_freq_count, max_full_count, start_exp, B, OutputPTR,
+            M_Global, N_Global, K_Global, Split_K);
+    }
+#endif
     else if (N_Global > 128) {
         // Greater than 128, use fixed 3-parameter configuration BLOCK_COL_WARPS=8 (TILE_N=128)
         error = LaunchKernelWithConfig_3Param<8>(stream, SignMantissa, CompressedFull,

@@ -26,8 +26,10 @@ def main() -> None:
                         help="Measure popcount instead of the GEMM decoder's total-count shuffle")
     parser.add_argument("--experiment-shmem-once", action="store_true",
                         help="Set per-device/kernel shared-memory limits once; no CUDA context resets")
+    parser.add_argument("--experiment-wide-prefill", action="store_true",
+                        help="Measure a 160-token fused tile for 129..160 tokens and at least 4096 weight rows")
     args = parser.parse_args()
-    if args.cpu_only and (args.experiment_popcount or args.experiment_shmem_once):
+    if args.cpu_only and (args.experiment_popcount or args.experiment_shmem_once or args.experiment_wide_prefill):
         parser.error("Kernel experiments require a CUDA build")
     root = Path(__file__).resolve().parents[2]
     native = root / "integrations/vllm/native"
@@ -81,6 +83,8 @@ def main() -> None:
         command.append("-DZIPSERV_EXPERIMENT_POPCOUNT=1")
     if args.experiment_shmem_once:
         command.append("-DZIPSERV_EXPERIMENT_SHMEM_ONCE=1")
+    if args.experiment_wide_prefill:
+        command.append("-DZIPSERV_EXPERIMENT_WIDE_PREFILL=1")
     output.parent.mkdir(parents=True, exist_ok=True)
     command += ["-o", str(output)]
     subprocess.run(command, check=True)
@@ -89,7 +93,8 @@ def main() -> None:
         "cuda": not args.cpu_only,
         "arch": args.arch,
         "experiments": {"popcount": args.experiment_popcount,
-                        "shmem_once": args.experiment_shmem_once},
+                        "shmem_once": args.experiment_shmem_once,
+                        "wide_prefill": args.experiment_wide_prefill},
         "fp32_partial_symbol": not args.cpu_only,
         "command": command,
         "compiler": subprocess.check_output([*compiler, "--version"], text=True),

@@ -170,6 +170,11 @@ int main() try {
     int fp32_gemms = 0;
     for (const auto& shape : {std::vector<int>{128, 192, 9, 3},
                               std::vector<int>{4096, 512, 129, 4},
+                              std::vector<int>{4096, 64, 129, 1},
+                              std::vector<int>{4096, 64, 147, 1},
+                              std::vector<int>{4096, 64, 160, 1},
+                              std::vector<int>{4096, 64, 161, 1},
+                              std::vector<int>{4032, 64, 147, 1},
                               std::vector<int>{128, 64, 1, 1}}) {
         const int m = shape[0], k = shape[1], n = shape[2], split = shape[3], count = m * n;
         case_name = "fp32 m=" + std::to_string(m) + " n=" + std::to_string(n);

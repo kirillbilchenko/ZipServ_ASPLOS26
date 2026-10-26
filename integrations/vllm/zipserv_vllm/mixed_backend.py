@@ -7,6 +7,7 @@ import fnmatch
 import functools
 import gc
 import hashlib
+import logging
 import weakref
 from collections import Counter
 
@@ -18,6 +19,7 @@ from .runtime import BUFFER_NAMES, PackedWeight, compress, decompress, linear
 
 _INSTALLED = False
 _SETTINGS = None
+logger = logging.getLogger(__name__)
 
 
 def tensor_hash(tensor: torch.Tensor) -> str:
@@ -27,19 +29,28 @@ def tensor_hash(tensor: torch.Tensor) -> str:
 class BF16Method:
     """Use fused decoding for small batches; preserve stock GEMM for large prefills."""
 
-    def __init__(self, packed: PackedWeight, stock_gemm, logical_n: int):
+    def __init__(self, packed: PackedWeight, stock_gemm, logical_n: int, *,
+                 is_head: bool = False, prefill_tokens: int = 768,
+                 decode_workspace_bytes: int = 1024 * 2**20):
         self.packed, self.stock_gemm, self.logical_n = packed, stock_gemm, logical_n
+        self.is_head = is_head
+        self.prefill_tokens = prefill_tokens
+        self.decode_workspace_bytes = decode_workspace_bytes
         self.calls = Counter()
 
     def apply(self, layer, x, bias=None):
         m = x.numel() // x.shape[-1]
-        if m > 768:
+        if m > self.prefill_tokens:
             if torch.cuda.is_current_stream_capturing():
                 raise RuntimeError("The BF16 mixed experiment qualifies decode-only CUDA graphs")
             self.calls["decode_then_stock"] += 1
-            return self.stock_gemm(layer, x, decompress(self.packed)[:self.logical_n], bias)
+            return self.stock_gemm(layer, x, decompress(
+                self.packed, max_bytes=self.decode_workspace_bytes)[:self.logical_n], bias)
         self.calls["fused"] += 1
-        desired = 8 if m <= 32 else 4 if m <= 128 else 1
+        # A wide vocabulary shard already supplies enough row blocks. Splitting
+        # K adds scratch traffic and BF16 partial rounding; measure it separately
+        # from the token policy used for narrower transformer projections.
+        desired = 1 if self.is_head else 8 if m <= 32 else 4 if m <= 128 else 1
         split = next(s for s in (desired, 4, 2, 1) if s <= desired and (self.packed.k // 64) % s == 0)
         output = linear(x, self.packed, split_k=split)
         if self.logical_n != self.packed.m:
@@ -73,6 +84,9 @@ def _prepare(worker, selected) -> None:
     if (config.model_config.dtype != torch.bfloat16 or int(compilation.mode) != 0
             or compilation.cudagraph_mode.name not in ("NONE", "FULL_DECODE_ONLY")):
         raise ValueError("Mixed experiment currently requires BF16 activations and eager or full-decode-only graphs with compilation mode 0")
+    if (selected.bf16 == "on" and compilation.cudagraph_mode.name == "FULL_DECODE_ONLY"
+            and compilation.max_cudagraph_capture_size > selected.bf16_prefill_tokens):
+        raise ValueError("BF16 prefill threshold must cover every decode graph capture size")
     model = worker.model_runner.get_model()
     storage_counts = Counter(t.untyped_storage()._cdata for module in model.modules()
         for t in list(module.parameters(recurse=False)) + list(module.buffers(recurse=False)))
@@ -91,8 +105,9 @@ def _prepare(worker, selected) -> None:
         # retain both supported ownership paths for an explicit type check.
         scheme = getattr(layer, "scheme", scheme)
         kernel = getattr(scheme, "kernel", None)
+        is_head = type(layer) is ParallelLMHead
         bf16 = ((isinstance(layer, LinearBase) and type(method) is UnquantizedLinearMethod)
-                or (type(layer) is ParallelLMHead and type(method) is UnquantizedEmbeddingMethod))
+                or (is_head and type(method) in (UnquantizedEmbeddingMethod, UnquantizedLinearMethod)))
         fp8 = type(kernel) is MarlinMxfp8LinearKernel
         if not (bf16 or fp8):
             continue
@@ -124,6 +139,15 @@ def _prepare(worker, selected) -> None:
             if raw.dtype != torch.bfloat16 or min(n, k) <= 0 or k % 64 or padded_n * k > 2**31 - 4097:
                 row["fallback"] = "unsupported BF16 shape/dtype"
                 continue
+            decoded_bytes = padded_n * k * 2
+            if decoded_bytes > selected.bf16_decode_workspace_bytes:
+                row["fallback"] = "decoded BF16 weight exceeds the temporary workspace budget"
+                logger.info("ZipServ keeps %s dense: %s bytes exceed the %s-byte decode budget",
+                            name, decoded_bytes, selected.bf16_decode_workspace_bytes)
+                continue
+            row.update(is_output_head=is_head, fused_head_split_k=1 if is_head else None,
+                       prefill_tokens=selected.bf16_prefill_tokens,
+                       largest_per_call_decoded_weight_bytes=decoded_bytes)
             cpu = raw.detach().cpu()
             if n != padded_n:
                 cpu = torch.nn.functional.pad(cpu, (0, 0, 0, padded_n - n))
@@ -172,7 +196,10 @@ def _prepare(worker, selected) -> None:
             for field, buffer in zip(BUFFER_NAMES, packed.buffers, strict=True):
                 layer.register_buffer("zipserv_mixed_bf16_" + field, buffer)
             stock_gemm = method._gemm_impl if type(method) is UnquantizedLinearMethod else dispatch_unquantized_gemm()
-            layer.quant_method = BF16Method(packed, stock_gemm, n)
+            layer.quant_method = BF16Method(
+                packed, stock_gemm, n, is_head=is_head,
+                prefill_tokens=selected.bf16_prefill_tokens,
+                decode_workspace_bytes=selected.bf16_decode_workspace_bytes)
             row["retained_bytes"] = packed.storage_bytes
             del packed
         else:

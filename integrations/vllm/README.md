@@ -131,6 +131,29 @@ offload, expert parallelism, LoRA, weight replacement, sleep mode and
 torch.compile are outside this adapter's qualified scope. XSFP4 and FP4-Local
 compressed-scale checkpoints are not automatically supported by this adapter.
 
+### Head and prefill follow-up (serving rerun pending)
+
+The mixed adapter now recognizes untied `ParallelLMHead` instances using either
+stock unquantized method. Explicitly targeted heads use Split-K 1; shared source
+storage and unsupported raw-weight readers remain ineligible. On real NVIDIA
+head weights with synthetic activations, the component screen saved
+0.1741/0.1738 GiB per rank and beat the dense head in its 8–128-token cases.
+This is component evidence, not an additional measured serving speedup.
+
+The opt-in native `--experiment-wide-prefill` build uses a 160-token tile for
+129–160 tokens when there are at least 4,096 weight rows and Split-K is 1.
+It decodes each weight tile once for that token range. On a real 12,576 × 4,096
+projection (padded to 12,608 rows), paired component timing at 147 tokens was
+29–43% faster than the current fused path on the two GB10s, while still slower
+than dense GEMM. Other token ranges retain the existing kernel. Native checks
+cover both tile boundaries, output guards, nondefault streams and graph replay;
+Compute Sanitizer reported zero errors. This is not qualified on other GPUs.
+
+A proposed dense fallback above 128 tokens failed its component speed gate:
+full-weight reconstruction made the 147–256-token cases 19–58% slower than the
+current fused path. The serving candidate therefore retains the 768-token
+fallback threshold. The combined head/wider-tile serving comparison is pending.
+
 ## What the current CT results mean
 
 All memory figures here are totals across **both GPUs**. The same-runtime CT
@@ -717,6 +740,16 @@ read `.weight` directly. Shared source storage and unsupported consumers fall
 back, and every fallback is reported. The generic plugin contains no model-name
 selection. BF16 output rows are padded to 64 and sliced back to their logical
 size; input columns must already be 64-aligned. Padding does not quantize weights.
+
+The mixed BF16 path accepts `ZIPSERV_MIXED_BF16_PREFILL_TOKENS` (default 768)
+and `ZIPSERV_MIXED_BF16_DECODE_WORKSPACE_BYTES` (default 1 GiB). Above the token
+threshold, it allocates a temporary decoded weight and uses stock GEMM. A layer
+whose padded dense weight exceeds the budget stays dense at startup; this is
+not chunked decoding. Decode graph capture sizes must fit within the fused
+threshold. The original raw-BF16 plugin has its separate 256 MiB default cap.
+The mixed adapter reports the chosen threshold, maximum decoded bytes and
+head Split-K policy per layer. Tune the threshold by measurement: decoding a
+whole weight can cost more than the redundant work it avoids.
 
 `--min-weight-saving-percent` and `--min-scale-saving-percent` default to 1 and
 compare estimated CUDA allocation sizes including metadata. They filter storage
