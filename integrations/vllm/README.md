@@ -214,6 +214,31 @@ timing comparison: the wider tile's gain remains component evidence, and the
 whole-serving changes cannot be attributed to it. Profiling left live allocation
 unchanged and its observation hooks were restored afterward.
 
+### BF16 row-padding follow-up
+
+The mixed adapter now aligns partial output tiles by repeating existing source
+rows, then discards those extra output columns as before. Zero padding could
+introduce thousands of exponent exceptions into the last tile. Since the fused
+kernel sizes shared memory using the maximum count across the whole matrix,
+those unused rows could slow every block. This changes neither logical weight
+bytes nor the CUDA kernel, and applies to any eligible partial BF16 output tile.
+Aligned tensors, the head's Split-K policy and the 768-token fallback stay as
+described above. Audits now report the padding mode and maximum tile counts.
+
+On the exact 12,576 × 4,096 NVIDIA projection, repeating source rows reduced the
+maximum rare count from 2,464 to 968/832 on the two GB10 ranks. At 171 tokens,
+paired component timing fell from 1.153/1.105 ms to 0.799/0.763 ms, about 31%.
+The screen used synthetic activations, rotating arm order, nine repetitions and
+128 MiB of cache pressure before each timed call. All fused output bytes matched
+the zero-padded control over 20 token counts, including the existing Split-K
+decode policy. A wider 256-token kernel was also screened, but was slower on
+several other shapes; it is not included in this change.
+
+These are component results. The full-model paired prefill and serving rerun
+are pending; this is not yet an end-to-end speed claim. Retained evidence:
+`nvfp4-prefill-20261026/padding-r{0,1}.json`, plus the exact-shard and nearby-shape
+screens that motivated this narrower fix.
+
 ## What the current CT results mean
 
 All memory figures here are totals across **both GPUs**. The same-runtime CT

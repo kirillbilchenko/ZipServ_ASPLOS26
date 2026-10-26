@@ -58,6 +58,23 @@ class BF16Method:
         return output if bias is None else output + bias
 
 
+def _pad_bf16_rows(weight: torch.Tensor) -> torch.Tensor:
+    """Align output rows by repeating real rows; callers must crop the output.
+
+    Zero padding can create a tile full of exponent exceptions. The decoder
+    reserves shared memory using the largest exception count of any tile, so
+    even discarded rows can reduce occupancy for the entire matrix. Repeating
+    source rows avoids introducing a new exponent distribution into the pad.
+    Logical weight bytes are unchanged; no reduction runs across output rows.
+    """
+    rows = weight.shape[0]
+    extra = (-rows) % 64
+    if not extra:
+        return weight
+    indices = torch.arange(extra, device=weight.device) % rows
+    return torch.cat((weight, weight[indices]), dim=0)
+
+
 def _prepare(worker, selected) -> None:
     from vllm import envs
     from vllm.model_executor.kernels.linear.mxfp8.marlin import MarlinMxfp8LinearKernel
@@ -150,10 +167,13 @@ def _prepare(worker, selected) -> None:
                        largest_per_call_decoded_weight_bytes=decoded_bytes)
             cpu = raw.detach().cpu()
             if n != padded_n:
-                cpu = torch.nn.functional.pad(cpu, (0, 0, 0, padded_n - n))
+                cpu = _pad_bf16_rows(cpu)
             packed = compress(cpu)
             del cpu
             row["padded_shape"] = [padded_n, k]
+            row["padding"] = "repeat_source_rows" if n != padded_n else "none"
+            row["max_common_per_tile"] = packed.max_common
+            row["max_rare_per_tile"] = packed.max_rare
             allocated = sum((t.nbytes + 511) // 512 * 512 for t in packed.buffers)
             row["candidate_bytes"] = packed.storage_bytes
         else:

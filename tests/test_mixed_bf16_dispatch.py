@@ -1,6 +1,6 @@
 """CPU checks for head dispatch and bounded prefill fallback in the mixed adapter."""
-from pathlib import Path
 import sys
+from pathlib import Path
 from types import ModuleType, SimpleNamespace
 
 import pytest
@@ -9,6 +9,36 @@ import torch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "integrations/vllm"))
 from zipserv_vllm import mixed_backend as backend
 from zipserv_vllm.mixed_plugin import Settings, settings
+
+
+@pytest.mark.parametrize("rows", [1, 7, 32, 63, 64, 65, 95, 127, 128])
+def test_padding_preserves_logical_bf16_bits_and_repeats_only_source_rows(rows):
+    # Include signed zero, infinities and NaN payloads: padding must copy bits,
+    # not round-trip values through Python floats or perform arithmetic on them.
+    words = torch.tensor([0, 0x8000, 0x3f80, 0x7f80, 0xff80, 0x7fc1, 0x0001, 0xffff],
+                         dtype=torch.uint16).repeat(rows, 8)
+    source = words.view(torch.bfloat16)
+    padded = backend._pad_bf16_rows(source)
+    extra = (-rows) % 64
+    assert tuple(padded.shape) == (rows + extra, 64)
+    assert padded.is_contiguous()
+    assert torch.equal(padded[:rows].view(torch.uint16), words)
+    if extra:
+        assert torch.equal(padded[rows:].view(torch.uint16), words[torch.arange(extra) % rows])
+    else:
+        assert padded is source
+
+
+@pytest.mark.parametrize("rows", [1, 32, 65, 125])
+def test_discarded_padding_does_not_change_linear_output_or_bias(rows):
+    source = torch.arange(rows * 64, dtype=torch.float32).reshape(rows, 64).remainder(9) - 4
+    source = source.to(torch.bfloat16)
+    x = torch.arange(17 * 64, dtype=torch.float32).reshape(17, 64).remainder(5) - 2
+    x = x.to(torch.bfloat16)
+    bias = torch.arange(rows, dtype=torch.bfloat16)
+    expected = torch.nn.functional.linear(x, source) + bias
+    actual = torch.nn.functional.linear(x, backend._pad_bf16_rows(source))[:, :rows] + bias
+    assert torch.equal(actual.view(torch.uint16), expected.view(torch.uint16))
 
 
 def method(monkeypatch, *, head=False, threshold=128, logical_n=65):

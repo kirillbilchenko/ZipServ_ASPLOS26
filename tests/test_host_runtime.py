@@ -89,6 +89,19 @@ def decode_words(packed):
     return result
 
 
+def test_padding_does_not_create_rare_zero_exponents(host_library):
+    from zipserv_vllm.mixed_backend import _pad_bf16_rows
+
+    source = torch.ones(65, 64, dtype=torch.bfloat16)
+    zero = runtime.compress(torch.nn.functional.pad(source, (0, 0, 0, 63)))
+    repeated = runtime.compress(_pad_bf16_rows(source))
+    assert zero.max_rare > 0
+    assert repeated.max_rare == 0
+    assert repeated.storage_bytes < zero.storage_bytes
+    decoded = torch.tensor(decode_words(repeated), dtype=torch.uint16).reshape(128, 64)
+    assert torch.equal(decoded[:65], source.view(torch.uint16))
+
+
 def track_free(lib, monkeypatch):
     calls = []
     original = lib.zipserv_free
