@@ -16,15 +16,19 @@ The experimental ModelOpt NVFP4 scale adapter passed component GPU checks and
 a 93-request TP2 serving screen on GB10 with stock vLLM 0.32 and DFlash2.
 It requires the **BF16 Marlin activation path**, including plain NVFP4 recipes
 when that consumer is selected. It does not implement native W4A4 arithmetic.
-The combined BF16/scale arm saved 10.332 GiB across two GPUs, with mixed speed
-results and a 16.4% slowdown in one concurrency case. It stays opt-in; no
-quality-equivalence or production-throughput claim follows from this screen.
+The revised BF16/head/scale arm saved **10.682 GiB across two GPUs**. Against
+a refreshed stock control, single-request decode ranged from −1.1% to +8.6%
+and concurrent throughput from +0.6% to +6.3%. The original comparison included
+a 16.4% slowdown, and the repeated stock control itself varied by up to 11.2%.
+These screens do not establish a reliable general speedup. The adapters stay
+opt-in; no quality-equivalence or production-throughput claim follows.
 See the [matched stock-runtime results](#stock-vllm--dflash2-results-2026-10-26)
 and [NVFP4 controls](#experimental-nvfp4-scale-controls).
 
 ## Stock vLLM + DFlash2 results, 2026-10-26
 
-Each checkpoint was compared against itself with extra ZipServ packing off/on.
+In the initial screen, each checkpoint was compared against itself with extra
+ZipServ packing off/on. The revised NVIDIA run is reported separately below.
 Both used stock vLLM 0.32.0, BF16 Marlin kernels, TP2 on two GB10s, the same
 five-layer DFlash2 drafter, decode CUDA graphs, 32K context and a fixed 4 GiB
 KV pool per GPU. FP4 weight codes were unchanged and FP8 packing was off.
@@ -43,9 +47,10 @@ speedups. No GSM8K quality result is attached to this NVIDIA comparison.
 
 NVIDIA coverage was 264 BF16 linears and 83/84 NVFP4 scale groups per rank.
 One scale group stayed raw because savings were below the configured 1% floor.
-The NVIDIA head stayed dense: its `ParallelLMHead` uses an
-`UnquantizedLinearMethod`, which the mixed adapter does not currently qualify
-for heads. Embeddings, routers, other raw-weight readers and FP4 codes stayed
+The NVIDIA head stayed dense in that original run: its `ParallelLMHead` uses an
+`UnquantizedLinearMethod`, which the previous mixed adapter did not qualify
+for heads. The current adapter adds that method to the head path described
+below. Embeddings, routers, other raw-weight readers and FP4 codes stayed
 stock. BF16 payload reduction was approximately 1.923 GiB per rank. NVFP4
 scales saved approximately 3.210/3.213 GiB after 24 MiB of scratch per rank.
 These components describe the allocation reduction; they are not additional
@@ -78,13 +83,21 @@ overhead: fused-kernel time also includes matrix multiplication. The initial
 C3 trace included one prefill step and was followed by a separately retained
 decode-only trace. Instrumented timings are excluded from serving results.
 
-Next measurements are matched compression-off traces, then separate BF16-only
-and scale-only arms. Head coverage with Split-K 1 and a lower, shape-specific
-prefill fallback threshold are hypotheses, not enabled changes. The observed
-77,440 × 4,096 BF16 head is 0.591 GiB per rank; this format could save roughly
-0.17 GiB at a 29–30% reduction. Its previous component timing does not establish
-a serving speedup. Summed trace durations and occupancy estimates also do not
-establish that the MoE kernels have saturated memory bandwidth.
+Matched compression-off traces are now complete. For the same twelve steady-C3
+steps, summed NVFP4 MoE kernel time changed from 1,045.98 to 1,048.35 ms on rank 0
+and from 1,040.69 to 1,028.88 ms on rank 1 (+0.23%/−1.13%). Identified BF16
+GEMM/reduction families fell from 569.63/568.92 ms to 515.81/501.01 ms, while NCCL
+time increased from 103.48/106.78 ms to 120.62/158.50 ms. These are overlapping
+kernel totals from short traces, not additive critical-path costs; opaque kernel
+names are excluded from the BF16 classification. They do not
+attribute the earlier whole-run slowdown entirely to scale decoding, nor prove
+that the MoE kernels have saturated memory bandwidth. Separate BF16-only and
+scale-only serving arms remain unmeasured.
+
+The observed 77,440 × 4,096 BF16 head is 0.591 GiB per rank. Its measured
+component payload saving is about 0.174 GiB per rank. This is smaller than an
+estimate based on a different head shape; component timing alone does not
+establish a serving speedup.
 
 Native qualification included exact scale round trips, stock/raw/delta5 GEMM
 comparisons, graphs, nondefault streams and guarded outputs. The expanded
@@ -131,7 +144,7 @@ offload, expert parallelism, LoRA, weight replacement, sleep mode and
 torch.compile are outside this adapter's qualified scope. XSFP4 and FP4-Local
 compressed-scale checkpoints are not automatically supported by this adapter.
 
-### Head and prefill follow-up (serving rerun pending)
+### Revised head and prefill serving result
 
 The mixed adapter now recognizes untied `ParallelLMHead` instances using either
 stock unquantized method. Explicitly targeted heads use Split-K 1; shared source
@@ -152,7 +165,54 @@ Compute Sanitizer reported zero errors. This is not qualified on other GPUs.
 A proposed dense fallback above 128 tokens failed its component speed gate:
 full-weight reconstruction made the 147–256-token cases 19–58% slower than the
 current fused path. The serving candidate therefore retains the 768-token
-fallback threshold. The combined head/wider-tile serving comparison is pending.
+fallback threshold. The wider tile addresses this short-prefill range;
+larger token counts retain the existing behavior.
+
+The combined serving rerun used commit `452430d`, the wider-tile native build,
+and the same checkpoint, container images, server command, five-layer drafter,
+decode graphs and fixed KV budget as a refreshed stock control. Both arms
+completed 93 requests with no failures or preemptions. Before/after reconstruction,
+ownership and coverage audits passed, and live allocation stayed unchanged:
+
+| Allocation | Stock | Revised compression | Saved |
+|---|---:|---:|---:|
+| Rank 0 | 94.333 GiB | 88.992 GiB | 5.341 GiB |
+| Rank 1 | 94.333 GiB | 88.993 GiB | 5.341 GiB |
+| Both GPUs | 188.667 GiB | 177.985 GiB | **10.682 GiB (5.66%)** |
+
+This is **0.350 GiB more net saving** than the original compressed run. Coverage
+is now 265 BF16 modules, including the shared target/drafter head with Split-K 1,
+and 83 NVFP4 scale groups per rank. The eleven separately audited BF16 drafter
+weights are unchanged. Embeddings, routers, FP4 codes and FP8 weights remain
+on their previous representations.
+
+Concurrent aggregate throughput, three rounds per level:
+
+| Requests | Fresh stock, tokens/s | Revised, tokens/s | Change vs fresh stock | Change vs original compressed | Fresh stock/revised TTFT p90, seconds |
+|---|---:|---:|---:|---:|---:|
+| 1 | 46.74 | 49.67 | +6.3% | +1.7% | 0.56 / 0.56 |
+| 2 | 40.07 | 40.79 | +1.8% | +5.0% | 1.80 / 1.91 |
+| 3 | 42.91 | 44.55 | +3.8% | +10.3% | 1.82 / 0.78 |
+| 4 | 64.61 | 65.80 | +1.8% | +4.1% | 26.25 / 23.82 |
+| 5 | 50.54 | 51.15 | +1.2% | +9.2% | 38.51 / 31.32 |
+| 6 | 52.79 | 53.11 | +0.6% | −4.7% | 49.85 / 48.83 |
+
+Seven of ten single-request cases improved against the fresh control; changes
+ranged from −1.1% to +8.6%. These are noninterleaved screens with one load per
+arm, not a statistical speed qualification. The stock C3 result alone changed
+from 48.33 to 42.91 tokens/s between runs (−11.2%); the revised 44.55 lies between
+them. Draft acceptance and output lengths can change with GEMM rounding.
+The fixed KV budget still causes queueing at higher concurrency. No freed
+memory was reassigned to KV, and this was not a GSM8K or quality-equivalence test.
+
+Final C1 and steady-C3 traces matched the earlier scheduled token counts and
+confirmed the compressed head executing inside CUDA graphs. The revised mixed
+C3 trace instead scheduled 163 prefill plus eight decode tokens, versus
+139 plus eight previously. Its 171-token step is outside the new 129–160-token
+tile range and used the existing kernel. That prefill trace is not a matched
+timing comparison: the wider tile's gain remains component evidence, and the
+whole-serving changes cannot be attributed to it. Profiling left live allocation
+unchanged and its observation hooks were restored afterward.
 
 ## What the current CT results mean
 

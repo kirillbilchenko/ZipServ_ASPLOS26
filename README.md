@@ -79,11 +79,14 @@ plugin adapted from MxWave. See the
 
 Reviewed source profiles cover vLLM 0.31.0 and 0.32.0; GPU serving results are
 specific to 0.32.0. On two GB10s with stock vLLM and DFlash2, additional packing
-saved **10.260 GiB for CT MXFP4** and **10.332 GiB for NVIDIA NVFP4**, each against
-the same checkpoint without ZipServ packing. NVIDIA single-request changes
-ranged from −3.0% to +4.1%; concurrent throughput ranged from −16.4% to +3.3%.
-These are opt-in memory savings with measured trade-offs, not a general speedup
-or a quality-equivalence result. See the
+saved **10.260 GiB for CT MXFP4** and **10.682 GiB for revised NVIDIA NVFP4**,
+each against the same checkpoint without ZipServ packing. The revised NVIDIA
+arm adds its BF16 head with Split-K 1 and an opt-in wider prefill tile. Against
+a refreshed stock control, single-request changes ranged from −1.1% to +8.6%
+and concurrent throughput from +0.6% to +6.3%. The stock repeat itself varied
+by up to 11.2%, and one concurrency case regressed versus the earlier compressed
+build. These are opt-in memory savings with measured trade-offs, not a proven
+general speedup or a quality-equivalence result. See the
 [matched results and controls](integrations/vllm/README.md#stock-vllm--dflash2-results-2026-10-26).
 
 For the GLM CT experiments, start with
