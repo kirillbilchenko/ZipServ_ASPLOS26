@@ -81,7 +81,8 @@ Reviewed source profiles cover vLLM 0.31.0 and 0.32.0; GPU serving results are
 specific to 0.32.0. On two GB10s with stock vLLM and DFlash2, additional packing
 saved **10.260 GiB for CT MXFP4** and **10.682 GiB for revised NVIDIA NVFP4**,
 each against the same checkpoint without ZipServ packing. The revised NVIDIA
-arm adds its BF16 head with Split-K 1 and an opt-in wider prefill tile. Against
+arm adds its BF16 head with Split-K 1. The subsequent padding fix retains this
+head path and removes the wider prefill tile after retesting. Against
 a refreshed stock control, single-request changes ranged from −1.1% to +8.6%
 and concurrent throughput from +0.6% to +6.3%. The stock repeat itself varied
 by up to 11.2%, and one concurrency case regressed versus the earlier compressed

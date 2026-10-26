@@ -153,20 +153,20 @@ head weights with synthetic activations, the component screen saved
 0.1741/0.1738 GiB per rank and beat the dense head in its 8–128-token cases.
 This is component evidence, not an additional measured serving speedup.
 
-The opt-in native `--experiment-wide-prefill` build uses a 160-token tile for
-129–160 tokens when there are at least 4,096 weight rows and Split-K is 1.
-It decodes each weight tile once for that token range. On a real 12,576 × 4,096
+The earlier experimental `--experiment-wide-prefill` build used a 160-token tile
+for 129–160 tokens with at least 4,096 weight rows and Split-K 1.
+It decoded each weight tile once for that token range. On a real 12,576 × 4,096
 projection (padded to 12,608 rows), paired component timing at 147 tokens was
 29–43% faster than the current fused path on the two GB10s, while still slower
-than dense GEMM. Other token ranges retain the existing kernel. Native checks
-cover both tile boundaries, output guards, nondefault streams and graph replay;
-Compute Sanitizer reported zero errors. This is not qualified on other GPUs.
+than dense GEMM. Other token ranges retained the existing kernel. Native checks
+covered both tile boundaries, output guards, nondefault streams and graph replay;
+Compute Sanitizer reported zero errors. The tile was removed after the padding
+fix eliminated its aggregate benefit; see the follow-up below.
 
 A proposed dense fallback above 128 tokens failed its component speed gate:
 full-weight reconstruction made the 147–256-token cases 19–58% slower than the
-current fused path. The serving candidate therefore retains the 768-token
-fallback threshold. The wider tile addresses this short-prefill range;
-larger token counts retain the existing behavior.
+current fused path. The serving candidate therefore retained the 768-token
+fallback threshold, which is unchanged by the later padding fix.
 
 The combined serving rerun used commit `452430d`, the wider-tile native build,
 and the same checkpoint, container images, server command, five-layer drafter,
@@ -234,10 +234,51 @@ the zero-padded control over 20 token counts, including the existing Split-K
 decode policy. A wider 256-token kernel was also screened, but was slower on
 several other shapes; it is not included in this change.
 
-These are component results. The full-model paired prefill and serving rerun
-are pending; this is not yet an end-to-end speed claim. Retained evidence:
-`nvfp4-prefill-20261026/padding-r{0,1}.json`, plus the exact-shard and nearby-shape
-screens that motivated this narrower fix.
+The full-model follow-up used one loaded NVIDIA NVFP4 model with stock vLLM
+0.32.0, TP2 and the same DFlash2 recipe. It retained both packed representations
+temporarily and switched only the affected eager-prefill weights between
+requests. Decode graphs kept their captured repeated-row buffers throughout;
+this comparison therefore measures prefill, not a decode-throughput change.
+The same token-ID prompt, one generated token and a prefix-cache reset were
+used in each pair, with alternating arm order and nine pairs per prompt size.
+
+| Prompt tokens | Zero-pad TTFT median, ms | Repeated-row TTFT median, ms | Median paired latency change |
+|---|---:|---:|---:|
+| 147 | 336.0 | 332.7 | −0.3% |
+| 171 | 364.3 | 375.4 | +0.6% |
+| 256 | 403.2 | 385.3 | −2.8% |
+| 512 | 520.8 | 509.0 | −3.7% |
+| 768 | 715.2 | 673.2 | −9.4% |
+| 2048 | 1369.7 | 1370.7 | +0.1% |
+
+The percentage is the median of per-pair ratios, not the ratio of the two
+median columns. **Bootstrap 95% intervals include no improvement in every
+case.** These positive larger-prefill medians are insufficient to claim a
+reliable end-to-end speedup. The 2048-token case uses decode-then-stock GEMM.
+
+All 54 pairs generated the same token. Full-model log probabilities varied
+even under unchanged settings, so an initial strict score-equality check was
+retained as a stopped attempt. Separate observed requests compared both packed
+variants on the *same live activations*: all 34 affected layers per rank were
+byte-identical at 147 and 171 tokens, in both arms (272 comparisons). This is
+not a model-quality benchmark. All control buffers were released afterward,
+with live CUDA allocation returning exactly to its pre-comparison value.
+Repacking the same weights saved another 4.152 MiB per rank in payload bytes;
+the purpose of this change is lower decoder overhead, not substantial new
+compression. The full 93-request serving regression passed with no failures or
+preemptions. Before/after coverage, ownership and exact reconstruction audits
+passed, and live CUDA allocation stayed at 177.954 GiB across both ranks.
+
+With this padding fix, a separate paired component screen compared the old
+160-token tile against the default 128-token tile on **all 265 live BF16 modules
+per rank**, at 129, 147 and 160 tokens. All outputs matched. The sums of measured
+component times were 0.6–4.9% slower with the wider tile across the six rank/count
+combinations. These sums are not a serving critical-path measurement. The wide
+tile and its build flag were removed; the head compression and padding fix stay.
+
+Retained evidence: `nvfp4-prefill-20261026/padding-r{0,1}.json`,
+`prefill-comparison.json`, `prefill-paired-initial.json`, and the exact-shard
+and nearby-shape screens. They remain in separate experiment backups.
 
 ## What the current CT results mean
 
