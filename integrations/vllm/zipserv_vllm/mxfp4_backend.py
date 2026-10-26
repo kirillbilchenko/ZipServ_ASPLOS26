@@ -12,19 +12,21 @@ from __future__ import annotations
 
 import functools
 import gc
-import importlib
 import hashlib
+import importlib
 import weakref
 from typing import Any
 
 import torch
 
 from .mxfp4_runtime import NativeMoe, pack_scales
+from .scale_ownership import scale_metadata, storage_identity
 
 _INSTALLED = False
 _NATIVE: dict[int, NativeMoe] = {}
 _SETTINGS: Any = None
 _STORAGE: dict[int, dict[str, Any]] = {}
+_DESCRIPTOR_STORAGES: set[tuple[str, int]] = set()
 _SCRATCH: dict[tuple[int, int], torch.Tensor] = {}
 _LAYERS: list[dict[str, Any]] = []
 _RAW_STORAGE: list[dict[str, Any]] = []
@@ -71,7 +73,7 @@ _DISPATCH_LIBRARY.impl("moe_gemm", _launch_moe, "CUDA")
 @torch.library.register_fake("zipserv_mxfp4::moe_gemm")
 def _fake_moe_gemm(*args: Any, **kwargs: Any) -> None:
     """Preserve mutation aliases without inspecting storage during compilation."""
-    return None
+    return
 
 
 _GEMM_OP = torch.ops.zipserv_mxfp4.moe_gemm.default
@@ -193,6 +195,7 @@ def prepare_layer(method: Any, layer: torch.nn.Module, mode: str) -> None:
                          "source_sha256": raw_sha, "raw_owner": weakref.ref(raw),
                          "layer_ordinal": entry["ordinal"], "name": name,
                          "replacement": replacement, "eager_or_capture_calls": 0}
+        _DESCRIPTOR_STORAGES.add(storage_identity(replacement))
         record.update(compressed=True, retained_bytes=packed.retained_bytes,
                       gpu_bytes_exact=True, source_sha256=raw_sha,
                       quant_descriptor_references=references,
@@ -343,15 +346,13 @@ def install(settings: Any) -> None:
     @functools.wraps(original_gemm)
     def gemm(*args: Any, **kwargs: Any) -> torch.Tensor:
         candidate = kwargs.get("b_scales", args[scale_position] if len(args) > scale_position else None)
-        if id(candidate) not in _STORAGE:
+        metadata = scale_metadata(candidate, _STORAGE, _DESCRIPTOR_STORAGES)
+        if metadata is None:
             return original_gemm(*args, **kwargs)
         call = signature.bind(*args, **kwargs)
         call.apply_defaults()
         p = call.arguments
         scales = p["b_scales"]
-        if id(scales) not in _STORAGE:
-            return original_gemm(*args, **kwargs)
-        metadata = _STORAGE[id(scales)]
         x, output, weight = p["input"], p["output"], p["b_qweight"]
         if (any(p[key] is not None and p[key].numel()
                 for key in ("b_bias", "a_scales", "global_scale", "b_qzeros"))

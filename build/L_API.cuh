@@ -48,6 +48,15 @@ cudaError_t BF16TripleBitmap_MM_API(
     const int K_Global,                   // Global K dimension
     __nv_bfloat16* Reduction_Workspace,   // Reduction workspace
     int Split_K);                          // K dimension split count
+// Opt-in accuracy experiment: same BF16 inputs/output, but Split_K > 1 requires
+// M*N*Split_K FLOAT workspace (4 bytes/element). Never pass BF16 workspace here.
+// Split_K == 1 uses the original BF16-output kernel and needs no workspace.
+cudaError_t BF16TripleBitmap_MM_API_FP32(
+    cudaStream_t stream, const uint8_t* sm, const __nv_bfloat16* rare,
+    const uint64_t* b1, const uint64_t* b2, const uint64_t* b3,
+    const int* medium, const int* global, int max_common, int max_rare,
+    uint8_t start_exp, const __nv_bfloat16* x, __nv_bfloat16* y,
+    int m, int n, int k, float* workspace, int split_k);
 cudaError_t BF16TripleBitmap_Decompress_API(
     cudaStream_t stream,
     const uint8_t* SignMantissa,

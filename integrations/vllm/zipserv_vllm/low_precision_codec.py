@@ -10,12 +10,12 @@ not a production checkpoint format or a GPU implementation.
 
 from __future__ import annotations
 
-from collections import Counter
-from dataclasses import dataclass
 import hashlib
 import heapq
 import math
 import struct
+from collections import Counter
+from dataclasses import dataclass
 
 KINDS = ("fp4", "fp8-e4m3", "fp8-e5m2", "scale-u8", "bytes")
 CODECS = ("palette2", "palette3", "palette4", "huffman", "rans", "vector16", "vector32",

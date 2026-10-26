@@ -3,13 +3,10 @@
 """Inert-by-default vLLM entry point for lossless MXFP4 expert-scale storage."""
 from __future__ import annotations
 
-from dataclasses import dataclass
-import hashlib
-import importlib.metadata
-import importlib.util
 import os
+from collections.abc import Mapping
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Mapping
 
 
 @dataclass(frozen=True)
@@ -43,25 +40,9 @@ def settings(environment: Mapping[str, str]) -> Settings | None:
 
 
 def check_upstream() -> None:
-    """Check the supported vLLM API files before wrapping internal loader and GEMM functions."""
-    from packaging.version import Version
-    if Version(importlib.metadata.version("vllm")).release != (0, 32, 0):
-        raise RuntimeError("ZipServ MXFP4 currently supports vLLM 0.32.0")
-    spec = importlib.util.find_spec("vllm")
-    if spec is None or spec.origin is None:
-        raise RuntimeError("Cannot locate installed vLLM")
-    root = Path(spec.origin).parent
-    contract = {
-        "_custom_ops.py": "36428c27bad9bf5ffe5debf9e34bccbc888adb68ad3eb972f6c9ff080e7f683e",
-        "model_executor/layers/quantization/compressed_tensors/compressed_tensors_moe/"
-        "compressed_tensors_moe_w4a4_mxfp4.py":
-            "c26a798139a6a24ae7802ae5e5c8cca180d8a3ad75ad1c06b0e69062d47d8eef",
-        "model_executor/layers/fused_moe/experts/marlin_moe.py":
-            "e048731e130ecc3100be0ab4a168777a7697131b41538f9d9b6a73c4f66e14ff",
-    }
-    for name, expected in contract.items():
-        if hashlib.sha256((root / name).read_bytes()).hexdigest() != expected:
-            raise RuntimeError(f"Installed vLLM MXFP4 API differs from the reviewed 0.32.0 source: {name}")
+    """Check the reviewed loader and native-GEMM source contract."""
+    from .compatibility import check_upstream as check
+    check("mxfp4")
 
 
 def register() -> None:

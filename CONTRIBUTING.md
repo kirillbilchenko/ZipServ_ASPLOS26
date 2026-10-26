@@ -23,3 +23,29 @@ and `numeric_scoring.py` (SHA256
 Changes add a standalone durable client, complete-run validation, explicit
 protocol identities and paired answer outcomes. Historical reference KL results
 are intentionally absent from the new experiment's protocol.
+
+The optional NVFP4 scale consumer adapts MxWave's Apache-2.0
+`integrations/glm53_nvfp4` components. Original file identities and the scope
+of modifications are recorded in
+`integrations/vllm/zipserv_vllm/nvfp4-provenance.json`. Keep this manifest,
+the package NOTICE and the native LICENSE when redistributing the adapter.
+
+# CPU validation
+
+Use Python 3.12 or newer and a C++17 compiler. Install a suitable Torch wheel
+for the host first if an existing GPU environment must be preserved, then:
+
+```bash
+python -m pip install -r requirements-dev.txt
+python -m pytest -q
+ruff check integrations/vllm/zipserv_vllm
+make -C tests cpu
+python -m build --wheel --no-isolation --outdir /tmp/zipserv-wheel integrations/vllm
+```
+
+The default pytest discovery is limited to `tests/`; archived experiment
+snapshots are not a second test suite. Two zstd-dependent tests skip when the
+system shared library is unavailable. Metadata-only tests still run.
+CPU CI exercises these checks without vLLM or CUDA. GPU kernels and serving
+changes additionally need the relevant device checks and matched serving
+measurements described in `integrations/vllm/README.md`.

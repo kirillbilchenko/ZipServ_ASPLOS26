@@ -10,8 +10,8 @@ from __future__ import annotations
 import functools
 import hashlib
 import importlib
-from importlib.metadata import version
 import os
+from importlib.metadata import version
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -23,6 +23,8 @@ _BACKEND = None
 _REPRESENTATION = "dictionary"
 _RAW_SOURCES = {}
 _RAW_LAYERS = []
+_DESCRIPTORS = {}
+_DESCRIPTOR_STORAGES = set()
 
 
 def _options():
@@ -103,6 +105,7 @@ def register() -> None:
         return
     from .low_precision_codec import encode_container
     from .scale_cache import DecodedScaleCache, EncodedScale, load_dictionary_library
+    from .scale_ownership import scale_metadata, storage_identity
 
     _LIBRARY = load_dictionary_library(Path(os.environ["ZIPSERV_SCALE_DICTIONARY_LIBRARY"]))
     model_plugin.install()
@@ -158,7 +161,10 @@ def register() -> None:
             if references < 1:
                 raise RuntimeError("No prepared quant descriptor owned the original scale tensor")
             setattr(layer, name, descriptor)
-            model_plugin._STORAGE[id(descriptor)] = {"shape": shape, "kind": 1, "cache_key": key}
+            metadata = {"shape": shape, "kind": 1, "cache_key": key, "replacement": descriptor}
+            model_plugin._STORAGE[id(descriptor)] = metadata
+            _DESCRIPTORS[id(descriptor)] = metadata
+            _DESCRIPTOR_STORAGES.add(storage_identity(descriptor))
             _SOURCES[key] = {"device": device.index, "shape": list(shape),
                              "raw_scale_sha256": raw_sha, "native_sha256": source.raw_sha256,
                              "container_sha256": source.container_sha256, "accounting": accounting}
@@ -171,9 +177,9 @@ def register() -> None:
         print(f"ZipServ dictionary scales prepared: {label}", flush=True)
 
     def gemm(*args, **kwargs):
-        scales = args[2]
-        metadata = model_plugin._STORAGE.get(id(scales))
-        if metadata is None or "cache_key" not in metadata:
+        scales = kwargs.get("scales", args[2] if len(args) > 2 else None)
+        metadata = scale_metadata(scales, _DESCRIPTORS, _DESCRIPTOR_STORAGES)
+        if metadata is None:
             return original_gemm(*args, **kwargs)
         cache = _CACHES[scales.device.index]
         with cache.borrow(metadata["cache_key"]) as descriptor:
@@ -183,6 +189,21 @@ def register() -> None:
 
     model_plugin.prepare_layer = prepare
     model_plugin._GEMM_OP = gemm
+    # The supplied backend may itself use id() to choose native vs stock GEMM.
+    # Reject aliases before that outer fallback, as well as at the native call.
+    import inspect
+
+    from vllm import _custom_ops as ops
+    original_outer = ops.moe_wna16_marlin_gemm
+    scale_position = list(inspect.signature(original_outer).parameters).index("b_scales")
+
+    @functools.wraps(original_outer)
+    def guarded_outer(*args, **kwargs):
+        scales = kwargs.get("b_scales", args[scale_position] if len(args) > scale_position else None)
+        scale_metadata(scales, _DESCRIPTORS, _DESCRIPTOR_STORAGES)
+        return original_outer(*args, **kwargs)
+
+    ops.moe_wna16_marlin_gemm = guarded_outer
     _INSTALLED = True
 
 

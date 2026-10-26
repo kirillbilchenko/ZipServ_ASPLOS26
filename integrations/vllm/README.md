@@ -1,9 +1,135 @@
-# Experimental vLLM 0.32.0 integration
+# Experimental vLLM integration
 
-This package provides BF16, MXFP8 weight and MXFP4 expert-scale storage adapters
+This package provides BF16, MXFP8 weight, MXFP4 and NVFP4 expert-scale storage adapters
 for this ZipServ checkout.
 It builds the native code here and registers a vLLM plugin without modifying
 vLLM files. See [Verification](#verification) for the validation scope.
+
+Source compatibility profiles cover
+vLLM 0.31.0 and 0.32.0, with adapter-specific source checks. Installing the
+Python package no longer replaces an existing vLLM; the optional `vllm` extra
+selects that reviewed release range. Version recognition is not GPU or model
+qualification: historical serving results below remain specific to 0.32.0.
+The legacy CT scale-cache adapter keeps its separate runtime restriction.
+
+The experimental ModelOpt NVFP4 scale adapter passed component GPU checks and
+a 93-request TP2 serving screen on GB10 with stock vLLM 0.32 and DFlash2.
+It requires the **BF16 Marlin activation path**, including plain NVFP4 recipes
+when that consumer is selected. It does not implement native W4A4 arithmetic.
+The combined BF16/scale arm saved 10.332 GiB across two GPUs, with mixed speed
+results and a 16.4% slowdown in one concurrency case. It stays opt-in; no
+quality-equivalence or production-throughput claim follows from this screen.
+See the [matched stock-runtime results](#stock-vllm--dflash2-results-2026-10-26)
+and [NVFP4 controls](#experimental-nvfp4-scale-controls).
+
+## Stock vLLM + DFlash2 results, 2026-10-26
+
+Each checkpoint was compared against itself with extra ZipServ packing off/on.
+Both used stock vLLM 0.32.0, BF16 Marlin kernels, TP2 on two GB10s, the same
+five-layer DFlash2 drafter, decode CUDA graphs, 32K context and a fixed 4 GiB
+KV pool per GPU. FP4 weight codes were unchanged and FP8 packing was off.
+These are separate from the production CT runtime comparisons below.
+
+| Checkpoint | Off, total live CUDA allocation | On, total | Saved, total | Serving result |
+|---|---:|---:|---:|---|
+| CT MXFP4 | 178.996 GiB | 168.736 GiB | 10.260 GiB | 8/10 single cases faster; concurrency mixed |
+| Plain NVIDIA NVFP4 | 188.667 GiB | 178.334 GiB | 10.332 GiB | Single cases −3.0% to +4.1%; concurrency −16.4% to +3.3% |
+
+The NVIDIA saving is about **5.17 GiB per GPU (5.48%)**. All 93 requests
+completed without errors or preemptions, before/after byte and ownership
+audits passed, and live allocation was unchanged after timing. Each arm used
+one model load and three repetitions; small differences are not established
+speedups. No GSM8K quality result is attached to this NVIDIA comparison.
+
+NVIDIA coverage was 264 BF16 linears and 83/84 NVFP4 scale groups per rank.
+One scale group stayed raw because savings were below the configured 1% floor.
+The NVIDIA head stayed dense: its `ParallelLMHead` uses an
+`UnquantizedLinearMethod`, which the mixed adapter does not currently qualify
+for heads. Embeddings, routers, other raw-weight readers and FP4 codes stayed
+stock. BF16 payload reduction was approximately 1.923 GiB per rank. NVFP4
+scales saved approximately 3.210/3.213 GiB after 24 MiB of scratch per rank.
+These components describe the allocation reduction; they are not additional
+savings to add to the totals above.
+
+NVIDIA concurrent aggregate throughput, three rounds per level:
+
+| Requests | Packing off, tokens/s | Packing on, tokens/s | Change | Off/on TTFT p90, seconds |
+|---|---:|---:|---:|---:|
+| 1 | 50.22 | 48.82 | −2.8% | 0.54 / 0.56 |
+| 2 | 39.42 | 38.85 | −1.4% | 1.79 / 1.82 |
+| 3 | 48.33 | 40.39 | −16.4% | 1.84 / 1.01 |
+| 4 | 66.27 | 63.18 | −4.7% | 23.12 / 23.76 |
+| 5 | 50.08 | 46.83 | −6.5% | 29.12 / 30.77 |
+| 6 | 53.96 | 55.72 | +3.3% | 48.71 / 51.09 |
+
+The fixed KV pool causes queueing above about three active short requests;
+the saved weight memory was not reassigned to KV. Prompt mixes differ across
+levels, so compare within a row. At C3, draft acceptance also changed from
+50.38% to 46.75%. BF16 Split-K rounding and generated outputs can differ despite
+exact weight reconstruction; this test does not isolate decoder cost from
+changed speculation. BF16-only and scale-only comparisons remain follow-up work.
+
+Bounded real-request Torch/CUDA traces retained graphs and DFlash2 on both
+ranks. At steady C3, 12 iterations each verified 12 scheduled tokens for three
+sequences. NVFP4 fused GEMMs accounted for 53–54% of summed kernel time, BF16
+GEMMs/reductions 22–23%, and NCCL 6–8%. All corresponding compressed GEMMs ran
+inside CUDA graphs. This identifies profiling targets, not decompression
+overhead: fused-kernel time also includes matrix multiplication. The initial
+C3 trace included one prefill step and was followed by a separately retained
+decode-only trace. Instrumented timings are excluded from serving results.
+
+Next measurements are matched compression-off traces, then separate BF16-only
+and scale-only arms. Head coverage with Split-K 1 and a lower, shape-specific
+prefill fallback threshold are hypotheses, not enabled changes. The observed
+77,440 × 4,096 BF16 head is 0.591 GiB per rank; this format could save roughly
+0.17 GiB at a 29–30% reduction. Its previous component timing does not establish
+a serving speedup. Summed trace durations and occupancy estimates also do not
+establish that the MoE kernels have saturated memory bandwidth.
+
+Native qualification included exact scale round trips, stock/raw/delta5 GEMM
+comparisons, graphs, nondefault streams and guarded outputs. The expanded
+six-shape component gate passed Compute Sanitizer memcheck with zero errors.
+A separate component timing screen included a 37% slowdown for one M=1 shape;
+the experimental codec is not a general speed optimization.
+
+Completed benchmark and trace archives are retained separately on Spark2.
+NVIDIA benchmark archive SHA-256 values are
+`876acb70e9f61f20ca8629c97f5eab451a08e2d07a5bbf32edcb8b62c7844ac1`
+(rank 0) and
+`0c6e84fd1aa52e73ac9b653c59aa3082fa3d4fd9271cb029502504611cf2f11f`
+(rank 1). Large evidence files and private experiment launch scripts are not
+part of the source distribution.
+
+## Experimental NVFP4 scale controls
+
+Build against the pinned vLLM source revision in
+`native/mxfp4/moe_sources.json`, using a fresh output directory:
+
+```bash
+python integrations/vllm/build_nvfp4_native.py \
+  --source /path/to/pinned-vllm-source --output /path/to/new-nvfp4-build --arch 121
+
+export VLLM_PLUGINS=zipserv_nvfp4_scales
+export ZIPSERV_NVFP4_SCALES=on
+export ZIPSERV_NVFP4_LIBRARY=/path/to/new-nvfp4-build/libzipserv_nvfp4_delta5.so
+export ZIPSERV_NVFP4_MIN_SAVING_PERCENT=1
+```
+
+Use these with an already working ModelOpt NVFP4 model served by Marlin with
+BF16 activations, compilation mode 0, and eager or decode-only CUDA graphs.
+`ZIPSERV_NVFP4_SCALES=off` retains stock execution and needs no native library;
+leaving the flag unset makes registration inert. Scale-only coverage does not
+compress BF16 weights: the separately configured mixed adapter controls those.
+The optional `zipserv_vllm.nvfp4_backend.ScaleWorker` worker extension exposes
+`zipserv_nvfp4_report(verify=True)` for byte, ownership and allocation audits.
+
+The codec preserves post-Marlin scale bytes using five-bit offsets per expert
+part, retaining wide ranges raw. Its minimum-saving policy includes metadata
+and allocator padding; aggregate reports also deduct shared scratch. Another
+expert-scale plugin cannot own the same weights. CSF/B12X, native W4A4,
+offload, expert parallelism, LoRA, weight replacement, sleep mode and
+torch.compile are outside this adapter's qualified scope. XSFP4 and FP4-Local
+compressed-scale checkpoints are not automatically supported by this adapter.
 
 ## What the current CT results mean
 
@@ -19,7 +145,7 @@ commits; the results and their limitations are summarized below.
 |---|---:|---|
 | CT runtime, optional weight representations disabled | 188.935 GiB | Reference with the same runtime, speculative decoding and KV budget |
 | Existing CT compression recipe | 179.210 GiB | Saves **9.725 GiB**; sampled concurrent throughput +9–15%; GSM8K 1248/1319 in both arms |
-| Existing CT plus the new narrow BF16 add-on | 178.807 GiB | Saves **another 0.404 GiB**; speed evidence is mixed; full GSM8K for this add-on is pending |
+| Existing CT plus the new narrow BF16 add-on | 178.807 GiB | Saves **another 0.404 GiB**; new 300-question subset: 288/300 in both arms; warmed C4 throughput 2.6% lower in one pair; full GSM8K for this add-on is pending |
 | Existing CT plus new KDA FP8 packing | **Not measured in serving** | Component payload saving **0.320 GiB**, before runtime buffers; current kernel is slower |
 
 Existing CT's largest payload reductions come from FP4 **scales**, BF16
@@ -119,6 +245,96 @@ are eligible. Packing can temporarily increase host memory.
 
 Default Split-K is one. Programmatic ZipServConfig accepts a positive split_k
 and exact module-prefix ignore list. Other checkpoint formats are rejected.
+Router `GateLinear` modules retain the stock method. Startup checks cover the
+scheduler token budget and graph padding; a layer that exceeds native indexing
+limits stays dense with a logged reason. The forward check remains a guard.
+Automatic registration warns and returns on unsupported or missing vLLM
+versions, so installing the package does not break unrelated vLLM workers.
+
+### BF16 dispatch experiments
+
+The original adapter accepts these fields through `ZipServConfig.from_config`:
+
+```python
+options = {
+    "quant_method": "zipserv",
+    "dispatch": "tokens",          # fixed (default), tokens, or shape
+    "split_k": 1,                  # used by fixed mode
+    "large_batch_tokens": 768,     # provisional threshold, not calibrated
+    "workspace_bytes": 64 << 20,   # budget for tokens/shape selection
+    "decode_workspace_bytes": 256 << 20,  # cap for the decoded-weight temporary
+    "partial_dtype": "bf16",       # bf16 (default) or fp32
+}
+```
+
+`tokens` starts with Split-K 8 through 32 tokens, 4 through 128, and 1 above
+128; it selects a smaller valid divisor when necessary. `shape` scores every
+valid divisor using token tiles, SM count, K length, workspace and reduction
+traffic. Both remain experiments: the initial score missed the best measured
+split on several shapes, and the token policy regressed large heads.
+
+These two modes require compilation mode 0 and either eager execution or
+`FULL_DECODE_ONLY` graphs. Above the threshold they allocate a temporary dense
+BF16 weight and call stock GEMM. This allocation is logged at load time; it is
+not a persistent cache. Before packing, a layer whose `m*k*2` decoded bytes
+exceed `decode_workspace_bytes` stays dense with a logged reason. The fallback
+also checks this cap before allocating. This is a per-call decoded-weight cap,
+not chunked decoding. For example, a 57,344×8,192 BF16 matrix needs 896 MiB
+when decoded, so the default 256 MiB cap keeps that whole layer dense in
+`tokens`/`shape` mode, including its small-batch calls. Large layers can
+therefore lose compression coverage under these modes. Increasing the cap
+permits that allocation; it does not make decoding incremental. The cap is
+separate from Split-K scratch; it does not bound all concurrent allocations,
+GEMM workspace or graph pools. It applies to the original BF16 adapter's new
+dispatch modes and the CT BF16 experiment, not every experimental mixed path.
+Capture sizes above the threshold keep the layer dense
+at startup. Attempting the temporary fallback inside an external graph raises.
+
+FP32 partials use the separate `zipserv_mm_fp32` bridge symbol with four-byte
+workspace elements; the existing `zipserv_mm` ABI still uses two-byte BF16
+workspace. Old libraries are rejected when FP32 is explicitly requested.
+This changes accumulation accuracy and scratch size, not the weight codec.
+The standalone interface is `linear(x, packed, split_k=4, partial_dtype="fp32")`.
+
+Two independent build switches isolate the other kernel experiments:
+
+```bash
+python integrations/vllm/build_native.py --arch 121 --experiment-popcount --output build/popcount.so
+python integrations/vllm/build_native.py --arch 121 --experiment-shmem-once --output build/shmem_once.so
+```
+
+The second initializes a worst-case limit once per kernel and device, under a
+host mutex. Launches still use their actual shared-memory size. It assumes the
+worker's CUDA primary context persists; restart the worker after a context reset.
+
+On one GB10 with vLLM 0.32.0, a paired screen of four real GLM BF16 tensor shapes
+found the following. Activations were synthetic; these are component results,
+not whole-model serving or GSM8K results. Small batches used graph-internal
+events; batches above 768 used eager execution for every arm.
+
+| Case | Existing fixed Split-K 1 | Experimental policy | Stock dense | Finding |
+| --- | ---: | ---: | ---: | --- |
+| 512×4096, 1 token | 110.5 µs | 32.8 µs, token policy | 29.7 µs | Much better than the old path, still slower than dense |
+| 4096×8192, 32 tokens | 329.7 µs | 296.0 µs, shape policy | 350.2 µs | About 10% lower latency than the old path |
+| 4096×8192, 8192 tokens | 28.1 ms | 7.0–7.3 ms, temporary decode + stock | 6.36 ms | Prefill fallback helps substantially; it still has overhead |
+| 77440×4096 head, 32 tokens | 2.34 ms | 2.62 ms, token policy | 2.91 ms | Global token thresholds can regress a working head |
+
+Values are medians with 128 MiB cache pressure. Ratios in the evidence use
+medians of paired samples and can differ from ratios of the table medians.
+FP32 partials reduced relative L2 error by roughly 30–33% in the split cases,
+with approximately 0–8% latency cost in this screen and twice the scratch bytes.
+Popcount showed no consistent gain. One-time attribute setup reduced direct
+host enqueue time about 3–4% (roughly 0.2–0.3 µs), without a consistent graph
+replay speedup. None of the performance experiments changes defaults.
+
+`tools/bench_bf16_dispatch.py` records all candidate splits, rotating paired
+timings, warm/pressure results, FP32 reference errors, library hashes, exact
+decode checks, guarded scratch and a two-layer graph replay. Native tests and
+the new Python GPU checks passed CUDA memcheck with zero errors. The native
+suite also checks the FP32 symbol directly, including float scratch contents,
+guard regions, split-one behavior and graph replay (three additional cases).
+Detailed
+evidence is separately retained at `docs/evidence/bf16-audit-20261025/`.
 
 ## Existing compressed-tensors MXFP4 model
 
@@ -194,6 +410,10 @@ GPU dictionary reconstruction. Sources outside the aligned-nibble range keep
 their original raw scale descriptors. The checkpoint and FP4 values are not
 rewritten. Dictionaries are currently prepared in memory on every startup;
 the decoded GPU cache does not accelerate checkpoint loading.
+The dictionary adapter retains descriptor ownership and rejects unknown
+integer descriptors or storage aliases before either the native call or the
+outer stock-GEMM fallback. Ordinary floating-point scale tensors keep the raw
+fallback. CPU regression tests exercise both wrapper boundaries.
 
 For an isolated real-model A/B run, start the server with
 `VLLM_SERVER_DEV_MODE=1` and keep its API bound to loopback. The benchmark uses
@@ -295,7 +515,8 @@ two GB10 workers. It does not relax the supported plugin's vLLM 0.32 guard.
 
 `tools/launch_ct_bf16_extra.py --mode off|on` creates private serving clones
 from the stopped, qualified CT containers. It requires idle GPUs and an
-already prepared `/tmp/zipserv-ct-extra.*` directory containing the current
+already prepared `/tmp/zipserv-ct-extra.*` directory or an
+`experiments/zipserv-ct-extra-*` directory containing the current
 native library, Python runtime and trial tools. The original CT containers,
 model mounts, device mappings and configuration must exist; this launcher is
 not a general-purpose CT deployment command. It retains the original adapter
@@ -307,10 +528,14 @@ The `off` arm observes the original BF16 weights. The `on` arm verifies each
 TP shard against the source checkpoint, packs it, checks exact GPU recovery
 and removes the dense parameter. Packed bytes are registered as non-trainable
 parameters so CT's existing prefetcher can discover their live addresses.
-The experimental dispatch uses Split-K 8 through 32 tokens, Split-K 4 through
+The default token dispatch uses Split-K 8 through 32 tokens, Split-K 4 through
 128, Split-K 1 through 768, and temporary decoding followed by the stock GEMM
 above that. That last path has a 64 MiB decoded weight temporary per worker;
 its allocation is reused by the allocator, not a persistent decoded cache.
+The launcher also accepts `--dispatch shape --partial-dtype fp32` for the
+new shape policy and FP32 scratch. `--workspace-bytes` bounds Split-K scratch;
+`--decode-workspace-bytes` bounds the dense temporary (default 256 MiB).
+This fixed-target experiment rejects a cap below its 64 MiB target size.
 The setting is fixed at startup because captured graphs retain their operands.
 
 `tools/bench_ct_bf16_extra.py` screens real weight shards with synthetic
@@ -334,6 +559,56 @@ repeated requests. Those diagnostic timings do not establish model-output
 equivalence, a general speedup or production quality. The experiment is
 inactive unless its separate plugin is registered and
 `ZIPSERV_CT_EXTRA_BF16=off|on` is explicitly set.
+
+### Current BF16 dispatch on CT: 300-question check, 2026-10-25
+
+The new run used `--dispatch shape --partial-dtype fp32` and the native
+`shmem_once` build, with popcount disabled. CT's existing scale, embedding,
+KDA, DFlash and graph paths remained enabled in both arms. The two GB10s ran
+the same legacy CT image, 6 GiB KV per worker, 500k configured context,
+32 maximum sequences and 6,919 batched tokens. This is an end-to-end test of
+the experimental CT adapter, not the supported vLLM 0.32 raw-BF16 adapter.
+
+| Metric | Existing CT | CT + new BF16 dispatch |
+| --- | ---: | ---: |
+| Live CUDA allocation, both GPUs | 179.210 GiB | 178.807 GiB |
+| Peak Torch CUDA allocation through GSM8K, both GPUs | 180.467 GiB | 180.063 GiB |
+| GSM8K answer exact match, frozen 300-question subset | 288/300 (96.0%) | 288/300 (96.0%) |
+| API errors / truncated answers | 0 / 0 | 0 / 0 |
+| GSM8K aggregate generated tokens/s | 83.89 | 83.11 |
+| Warm fixed-output C4 aggregate tokens/s | 93.40 | 91.01 |
+| Warm long-prompt first-token latency | 1.957 s | 1.987 s |
+
+The added net saving is **413.24 MiB (0.404 GiB, 0.225%)**. The weight payload
+shrinks by 413.26 MiB; allocator accounting differs slightly. Original BF16
+source bits were verified on both ranks before and after execution. Four
+questions became correct and four became incorrect, so equal totals do not
+mean identical answers. The subset is selected once with seed 42 from the
+existing hash-pinned 1,319-question protocol, using the same client, scorer,
+prompts, temperature zero, 1,024-token limit and concurrency four in both arms.
+
+The warmed speed test followed GSM8K, with six sequential repetitions per
+workload and three four-request cohorts, each generating exactly 64 tokens.
+No rank-zero runtime-compilation warnings occurred in either warmed pass.
+The C4 point estimate is **2.6% lower** with ZipServ; cohort ranges overlap
+(CT 88.46–95.55, ZipServ 90.25–92.44 tokens/s). Sequential decode-rate changes
+were between -0.8% and +0.8%. One server load per arm, variable generated text
+and speculative acceptance prevent claims of a general speedup, slowdown or
+quality equivalence. The GSM8K throughput figure also has variable output
+lengths and is not a replacement for fixed-output timing.
+
+This establishes a small working memory saving on CT, with no demonstrated
+serving-speed benefit. The fixed KV budget was deliberately retained; capacity
+benefits from enlarging KV or the batch limit were not tested. Torch counters
+exclude driver/NCCL allocations and host RAM. Both private test servers were
+stopped after evaluation.
+
+`tools/eval_ct_bf16_gsm8k.py` freezes the subset, audits both workers, preserves
+responses and compares paired answers. Docker mount lists are compared by
+unique destination, source and access mode because `docker inspect` can reorder
+the list; the frozen serving clients and source files were not changed during
+the run. Verified archives from both ranks and the readout are retained at
+`docs/evidence/ct-bf16-gsm300-20261025/` and on Spark2.
 
 ## Standalone MXFP4 expert-scale plugin
 
@@ -732,7 +1007,8 @@ bitwise decoding, shared pointers, retained views and failure cleanup. They need
 a C++17 compiler and a Torch/pytest environment, without CUDA or vLLM:
 
 ```bash
-python -m pytest -q tests/test_runtime.py tests/test_host_runtime.py
+python -m pip install -r requirements-dev.txt
+python -m pytest -q
 ```
 
 Verified: native SM121 correctness and memcheck, shared-buffer CPU ownership
@@ -741,14 +1017,15 @@ on Torch 2.13/2.14, Torch custom-op schema/fake behavior, graphs/streams, vLLM
 shared-buffer CUDA runtime checks also pass under Compute Sanitizer. Native reconstruction preserves every BF16 word;
 floating-point GEMM outputs can differ from another backend's rounding.
 
-Full-model TP2 evidence is limited to the mixed CT profile above; the raw-BF16
+Full-model TP2 evidence covers the mixed CT and NVIDIA profiles above; the raw-BF16
 quantization adapter, other models and hybrid-head configurations still need
 their own full-model checks. LoRA, weight refit, other GPUs and production
 throughput remain unqualified. Dynamo tests use
 backend=eager and are not an Inductor performance benchmark. Use the included
 scripts as component checks, then compare the intended model and serving load.
 
-The plugin rejects other vLLM release versions. PackedWeight is an in-process
+Automatic registration warns and skips unsupported vLLM releases; explicitly
+enabled adapters reject unreviewed versions or source profiles. PackedWeight is an in-process
 trusted object produced by this encoder; it is not a validated interchange
 format for arbitrary packed buffers. See package LICENSE, NOTICE and
 [source-provenance.json](source-provenance.json) for the MxWave attribution.

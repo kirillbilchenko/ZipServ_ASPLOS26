@@ -13,11 +13,12 @@
  ***************************************************************************/
 #define ELEMENT_PER_THREADBLOCK 256
 // Split-K reduction operation
-__global__ void SplitK_Reduction_BF16(__nv_bfloat16* C, __nv_bfloat16* Reduction_Workspace, 
+template<typename Partial = __nv_bfloat16>
+__global__ void SplitK_Reduction_BF16(__nv_bfloat16* C, Partial* Reduction_Workspace,
                                    int M_Global, int N_Global, int Split_K)
 {
     __nv_bfloat16* C_BasePTR_ThisBlock = C + ELEMENT_PER_THREADBLOCK * blockIdx.x;
-    __nv_bfloat16* R_BasePTR_ThisBlock = Reduction_Workspace + ELEMENT_PER_THREADBLOCK * blockIdx.x;
+    Partial* R_BasePTR_ThisBlock = Reduction_Workspace + ELEMENT_PER_THREADBLOCK * blockIdx.x;
     
     float Results[HALF_PER_128B];
     
@@ -29,7 +30,7 @@ __global__ void SplitK_Reduction_BF16(__nv_bfloat16* C, __nv_bfloat16* Reduction
         #pragma unroll
         for (int j = 0; j < HALF_PER_128B; j++)
             if (ELEMENT_PER_THREADBLOCK * blockIdx.x + threadIdx.x * HALF_PER_128B + j < M_Global * N_Global)
-                Results[j] += __bfloat162float(R_BasePTR_ThisBlock[threadIdx.x * HALF_PER_128B + j]);
+                Results[j] += static_cast<float>(R_BasePTR_ThisBlock[threadIdx.x * HALF_PER_128B + j]);
         R_BasePTR_ThisBlock += M_Global * N_Global;
     }
     

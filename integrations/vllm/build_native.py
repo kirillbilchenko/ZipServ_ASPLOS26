@@ -22,7 +22,13 @@ def main() -> None:
     mode.add_argument("--arch", choices=["80", "86", "89", "90", "100", "120", "121"])
     mode.add_argument("--cpu-only", action="store_true")
     parser.add_argument("--output", type=Path)
+    parser.add_argument("--experiment-popcount", action="store_true",
+                        help="Measure popcount instead of the GEMM decoder's total-count shuffle")
+    parser.add_argument("--experiment-shmem-once", action="store_true",
+                        help="Set per-device/kernel shared-memory limits once; no CUDA context resets")
     args = parser.parse_args()
+    if args.cpu_only and (args.experiment_popcount or args.experiment_shmem_once):
+        parser.error("Kernel experiments require a CUDA build")
     root = Path(__file__).resolve().parents[2]
     native = root / "integrations/vllm/native"
     host = native / "host_bridge.cpp"
@@ -71,6 +77,10 @@ def main() -> None:
             native / "bridge.cu",
         ]
     output = (args.output or default_output).resolve()
+    if args.experiment_popcount:
+        command.append("-DZIPSERV_EXPERIMENT_POPCOUNT=1")
+    if args.experiment_shmem_once:
+        command.append("-DZIPSERV_EXPERIMENT_SHMEM_ONCE=1")
     output.parent.mkdir(parents=True, exist_ok=True)
     command += ["-o", str(output)]
     subprocess.run(command, check=True)
@@ -78,6 +88,9 @@ def main() -> None:
         "abi_version": 2,
         "cuda": not args.cpu_only,
         "arch": args.arch,
+        "experiments": {"popcount": args.experiment_popcount,
+                        "shmem_once": args.experiment_shmem_once},
+        "fp32_partial_symbol": not args.cpu_only,
         "command": command,
         "compiler": subprocess.check_output([*compiler, "--version"], text=True),
         "sources_sha256": {

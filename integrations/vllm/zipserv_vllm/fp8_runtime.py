@@ -8,8 +8,8 @@ validation; a storage threshold is not a claim of lower latency.
 from __future__ import annotations
 
 import ctypes
-from functools import lru_cache
 import os
+from functools import lru_cache
 from pathlib import Path
 
 import torch
@@ -98,8 +98,14 @@ def _fake_decode(data: torch.Tensor, n: int, k: int) -> torch.Tensor:
 
 def apply(layer: torch.nn.Module, x: torch.Tensor, bias: torch.Tensor | None = None) -> torch.Tensor:
     from vllm.model_executor.layers.quantization.utils.marlin_utils import (
-        get_marlin_workspace, marlin_pad_dim, marlin_unpad_output, should_use_atomic_add_reduce)
-    from vllm.model_executor.layers.quantization.utils.marlin_utils_fp8 import apply_mxfp8_marlin_linear
+        get_marlin_workspace,
+        marlin_pad_dim,
+        marlin_unpad_output,
+        should_use_atomic_add_reduce,
+    )
+    from vllm.model_executor.layers.quantization.utils.marlin_utils_fp8 import (
+        apply_mxfp8_marlin_linear,
+    )
     from vllm.v1.worker.workspace import is_workspace_manager_initialized
 
     n, k = layer.zipserv_fp8_shape

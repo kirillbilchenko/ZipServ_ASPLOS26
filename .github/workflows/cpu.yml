@@ -1,0 +1,38 @@
+name: CPU validation
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  cpu:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Create CPU test environment
+        run: |
+          python3 -m venv .venv
+          .venv/bin/python -m pip install 'torch>=2.4,<3' --index-url https://download.pytorch.org/whl/cpu
+          .venv/bin/python -m pip install -r requirements-dev.txt
+      - name: Python CPU tests
+        run: .venv/bin/python -m pytest -q
+      - name: Integration lint
+        run: .venv/bin/ruff check integrations/vllm/zipserv_vllm
+      - name: Native CPU correctness
+        run: make -C tests cpu
+      - name: Build optional integration wheel
+        run: .venv/bin/python -m build --wheel --no-isolation --outdir /tmp/zipserv-wheel integrations/vllm

@@ -45,6 +45,7 @@ def pack_scales(scales: torch.Tensor) -> PackedScales:
             or scales.numel() % 16 or scales.numel() >= 2**31):
         raise ValueError("Require contiguous 3D CUDA E8M0 scales within the native int32 bound")
     import numpy as np
+
     from .mxfp4_codec import pack_sparse, unpack_sparse
 
     raw = scales.view(torch.uint8).cpu().numpy().reshape(-1)

@@ -29,3 +29,11 @@ Modified by Neural Magic
 Copyright contributors to the vLLM project
 Originally adapted from https://github.com/IST-DASLab/marlin
 The pinned vLLM source and its Apache-2.0 LICENSE are retained in build outputs.
+
+The separate NVFP4 scale codec, native bridge and source staging adapt
+Apache-2.0 MxWave integrations/glm53_nvfp4 code, Copyright MxWave contributors.
+ZipServ adds its namespace and ABI, device handling, a shared-memory reuse
+barrier, byte/ownership checks, per-expert packing and reviewed source profiles.
+See nvfp4-provenance.json for the original revision and file hashes. This
+adapter stages the same hash-pinned Apache-2.0 vLLM grouped-Marlin sources and
+retains their license and upstream attributions in native build outputs.

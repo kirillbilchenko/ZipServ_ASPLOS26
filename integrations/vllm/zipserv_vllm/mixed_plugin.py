@@ -3,13 +3,11 @@
 """Explicit experimental BF16/FP8 additions to a mixed quantized checkpoint."""
 from __future__ import annotations
 
-from dataclasses import dataclass
-import hashlib
-import importlib.util
 import json
 import os
+from collections.abc import Mapping
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Mapping
 
 
 @dataclass(frozen=True)
@@ -49,23 +47,11 @@ def register() -> None:
     selected = settings(os.environ)
     if selected is None:
         return
-    from .mxfp4_plugin import check_upstream
-    check_upstream()
-    spec = importlib.util.find_spec("vllm")
-    root = Path(spec.origin).parent
-    contract = {
-        "model_executor/layers/linear.py": "7a9b90937865fa35d955ffc2017f23d3997bc4fba954e2667870b1b4854a38e0",
-        "model_executor/layers/vocab_parallel_embedding.py": "10e17024bd5a5915e0d486e7a78a96d62e77bce803e1afd27feae7ad2042edc0",
-        "model_executor/kernels/linear/mxfp8/marlin.py": "299c549e3e3830fe3b52ef83eca565356d6bd42e2a85805300a1bd0fe6a67e0c",
-        "model_executor/layers/quantization/utils/marlin_utils_fp8.py": "a5cc60882dc32851b2cb7d573e2b28980319a99ef816fd6ed9925b6fabfffd9a",
-        "model_executor/layers/quantization/utils/marlin_utils.py": "e60713c15080347b01425f90eaf03840ca80a1cd226ec57e526e8f6286eeeb22",
-        "v1/worker/workspace.py": "bcf9ea207279c38a476be4ca74137a9d3a973f1fd97d85639a383357f881eb06",
-        "model_executor/layers/quantization/compressed_tensors/schemes/compressed_tensors_w8a8_mxfp8.py":
-            "ec5de2adc6b7452377a08e685522224aee8c345dc3312fb15cece662b40d3a60",
-        "v1/worker/gpu_worker.py": "e970aa29a738aa15cd963d9f9202ca6d3d504e98fd344959fd998e940472a5a0",
-    }
-    for name, expected in contract.items():
-        if hashlib.sha256((root / name).read_bytes()).hexdigest() != expected:
-            raise RuntimeError(f"Installed mixed-weight API differs from reviewed source: {name}")
+    from .compatibility import check_upstream
+    # A BF16-only experiment must not depend on unrelated FP4/FP8 hooks.
+    adapters = ["mixed_bf16"]
+    if selected.fp8 == "on":
+        adapters.append("mixed_fp8")
+    check_upstream(*adapters)
     from .mixed_backend import install
     install(selected)

@@ -70,6 +70,11 @@ struct GpuPacked {
         return BF16TripleBitmap_MM_API(stream, common.p, rare.p, b1.p, b2.p, b3.p,
             medium.p, global.p, h.max_common, h.max_rare, h.start, x, y, h.m, n, h.k, scratch, split);
     }
+    cudaError_t mm_fp32(cudaStream_t stream, const __nv_bfloat16* x, __nv_bfloat16* y,
+                       int n, float* scratch, int split) {
+        return BF16TripleBitmap_MM_API_FP32(stream, common.p, rare.p, b1.p, b2.p, b3.p,
+            medium.p, global.p, h.max_common, h.max_rare, h.start, x, y, h.m, n, h.k, scratch, split);
+    }
     void check_decode(const std::vector<__nv_bfloat16>& expected, cudaStream_t stream) {
         Device<__nv_bfloat16> output(expected.size());
         CUDA(BF16TripleBitmap_Decompress_API(stream, common.p, rare.p, b1.p, b2.p, b3.p,
@@ -160,8 +165,69 @@ int main() try {
             REQUIRE(gpu.mm(stream, nullptr, nullptr, 0, nullptr, 1) == cudaSuccess);
         }
     }
+    // Exercise the separate FP32 workspace contract directly, including every
+    // partial's float value: an accidental BF16 scratch implementation must fail.
+    int fp32_gemms = 0;
+    for (const auto& shape : {std::vector<int>{128, 192, 9, 3},
+                              std::vector<int>{4096, 512, 129, 4},
+                              std::vector<int>{128, 64, 1, 1}}) {
+        const int m = shape[0], k = shape[1], n = shape[2], split = shape[3], count = m * n;
+        case_name = "fp32 m=" + std::to_string(m) + " n=" + std::to_string(n);
+        std::vector<__nv_bfloat16> w(m * k), x(n * k), expected(count);
+        for (auto& v : w) v = __float2bfloat16(float(int(rng() % 3) - 1));
+        for (auto& v : x) v = __float2bfloat16(float(int(rng() % 3) - 1));
+        std::vector<float> partials(count * split, 0.0f);
+        for (int token = 0; token < n; ++token)
+            for (int row = 0; row < m; ++row) {
+                const int offset = token * m + row;
+                for (int column = 0; column < k; ++column)
+                    partials[(column / (k / split)) * count + offset] +=
+                        __bfloat162float(w[row * k + column]) * __bfloat162float(x[token * k + column]);
+                float sum = 0;
+                for (int s = 0; s < split; ++s) sum += partials[s * count + offset];
+                expected[offset] = __float2bfloat16(sum);
+            }
+        Packed packed(w, m, k);
+        GpuPacked gpu(packed);
+        Device<__nv_bfloat16> dx(x.size()), dy(count + 256);
+        Device<float> scratch(count * split + 256);
+        dx.upload(x.data(), x.size());
+        CUDA(cudaMemsetAsync(dy.p, 0x55, (count + 256) * 2, stream));
+        CUDA(cudaMemsetAsync(scratch.p, 0x55, (count * split + 256) * 4, stream));
+        CUDA(gpu.mm_fp32(stream, dx.p, dy.p + 128, n, scratch.p + 128, split));
+        cudaGraph_t graph; cudaGraphExec_t executable;
+        CUDA(cudaStreamBeginCapture(stream, cudaStreamCaptureModeThreadLocal));
+        CUDA(gpu.mm_fp32(stream, dx.p, dy.p + 128, n, scratch.p + 128, split));
+        CUDA(cudaStreamEndCapture(stream, &graph));
+        CUDA(cudaGraphInstantiate(&executable, graph, nullptr, nullptr, 0));
+        CUDA(cudaGraphLaunch(executable, stream));
+        CUDA(cudaStreamSynchronize(stream));
+        std::vector<__nv_bfloat16> actual(count + 256);
+        std::vector<float> actual_partials(count * split);
+        std::vector<uint32_t> guarded(count * split + 256);
+        CUDA(cudaMemcpy(actual.data(), dy.p, actual.size() * 2, cudaMemcpyDeviceToHost));
+        CUDA(cudaMemcpy(guarded.data(), scratch.p, guarded.size() * 4, cudaMemcpyDeviceToHost));
+        for (int i = 0; i < count; ++i)
+            REQUIRE(__bfloat16_as_ushort(actual[i + 128]) == __bfloat16_as_ushort(expected[i]));
+        for (int i = 0; i < 128; ++i) {
+            REQUIRE(__bfloat16_as_ushort(actual[i]) == 0x5555);
+            REQUIRE(__bfloat16_as_ushort(actual[count + 128 + i]) == 0x5555);
+            REQUIRE(guarded[i] == 0x55555555);
+            REQUIRE(guarded[count * split + 128 + i] == 0x55555555);
+        }
+        if (split > 1) {
+            CUDA(cudaMemcpy(actual_partials.data(), scratch.p + 128, actual_partials.size() * 4, cudaMemcpyDeviceToHost));
+            REQUIRE(actual_partials == partials);
+        } else {
+            for (auto word : guarded) REQUIRE(word == 0x55555555);
+        }
+        REQUIRE(gpu.mm_fp32(stream, nullptr, nullptr, 1, nullptr, split) == cudaErrorInvalidValue);
+        REQUIRE(gpu.mm_fp32(stream, nullptr, nullptr, 0, nullptr, split) == cudaSuccess);
+        CUDA(cudaGraphExecDestroy(executable)); CUDA(cudaGraphDestroy(graph));
+        ++fp32_gemms;
+    }
     CUDA(cudaStreamDestroy(stream));
     std::cout << "PASS: " << decoded << " bit-exact decodes; " << gemms
-              << " GEMMs; guards; nondefault stream; CUDA graphs\n";
+              << " GEMMs; " << fp32_gemms << " FP32 workspace cases; guards; nondefault stream; CUDA graphs\n";
     return 0;
 } catch (const std::exception& e) { std::cerr << "FAIL: " << e.what() << '\n'; return 1; }

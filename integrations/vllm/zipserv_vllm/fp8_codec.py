@@ -5,6 +5,8 @@ from __future__ import annotations
 
 import hashlib
 import struct
+from itertools import pairwise
+
 import numpy as np
 
 HEADER = struct.Struct("<4sBBHQQ8s32x")
@@ -83,7 +85,7 @@ def _decode(blob: bytes, *, magic: bytes, unpack_tile) -> bytes:
     entries = np.frombuffer(blob, dtype="<u8", offset=64, count=tiles)
     offsets = [int(value) & ~15 for value in entries] + [len(blob)]
     if offsets[0] != data_offset or any(a >= b or a % alignment or b % alignment
-                                      for a, b in zip(offsets, offsets[1:])):
+                                      for a, b in pairwise(offsets)):
         raise ValueError("Invalid ZFA1 tile boundaries")
     result = bytearray()
     for i, entry in enumerate(entries):

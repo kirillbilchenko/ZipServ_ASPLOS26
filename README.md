@@ -67,7 +67,7 @@ cd kernel_benchmark
 # Example: ./test_mm 4096 4096 128 1
 ```
 
-## Local backports and vLLM 0.32.0
+## Local backports and optional vLLM integration
 
 The `docs/` paths mentioned below identify separately retained experiment notes
 and evidence, not files shipped in this source checkout. The relevant findings
@@ -76,6 +76,15 @@ and limitations are included here and in the tracked integration README.
 This fork includes native correctness fixes and an experimental optional vLLM
 plugin adapted from MxWave. See the
 [vLLM build and usage instructions](integrations/vllm/README.md).
+
+Reviewed source profiles cover vLLM 0.31.0 and 0.32.0; GPU serving results are
+specific to 0.32.0. On two GB10s with stock vLLM and DFlash2, additional packing
+saved **10.260 GiB for CT MXFP4** and **10.332 GiB for NVIDIA NVFP4**, each against
+the same checkpoint without ZipServ packing. NVIDIA single-request changes
+ranged from −3.0% to +4.1%; concurrent throughput ranged from −16.4% to +3.3%.
+These are opt-in memory savings with measured trade-offs, not a general speedup
+or a quality-equivalence result. See the
+[matched results and controls](integrations/vllm/README.md#stock-vllm--dflash2-results-2026-10-26).
 
 For the GLM CT experiments, start with
 [what the current CT results mean](integrations/vllm/README.md#what-the-current-ct-results-mean).
@@ -88,7 +97,9 @@ compress an untied BF16 output head. The separate opt-in
 [`zipserv_mxfp4_scales` entry point](integrations/vllm/README.md#standalone-mxfp4-expert-scale-plugin)
 bundles lossless MXFP4 expert-scale storage and its fused Marlin consumer.
 It has on/off flags, conservative stock fallback and per-worker coverage and
-memory audits. NVFP4 requires a separate consumer. See each integration's
+memory audits. A separate opt-in
+[`zipserv_nvfp4_scales` consumer](integrations/vllm/README.md#experimental-nvfp4-scale-controls)
+supports qualified NVFP4 scales on the BF16 Marlin path. See each integration's
 validation scope before applying it to a full serving stack.
 
 The experimental

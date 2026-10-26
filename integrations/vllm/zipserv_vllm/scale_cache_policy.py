@@ -30,8 +30,8 @@ class CachePolicy:
         self.entries: OrderedDict[str, tuple[int, int, int]] = OrderedDict()
         self.free = [(0, self.capacity)] if self.capacity else []
         self.sizes: dict[str, int] = {}
-        self.counters = dict(lookups=0, hits=0, misses=0, admissions=0, evictions=0,
-                             bypasses=0, decoded_bytes=0)
+        self.counters = {"lookups": 0, "hits": 0, "misses": 0, "admissions": 0,
+                         "evictions": 0, "bypasses": 0, "decoded_bytes": 0}
 
     def register(self, key: str, size: int) -> None:
         """Bind an immutable source key to its exact decoded size."""

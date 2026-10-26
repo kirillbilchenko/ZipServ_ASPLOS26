@@ -3,12 +3,12 @@
 """Experimental post-load mixed storage: explicit targets, exact bytes, source release."""
 from __future__ import annotations
 
-from collections import Counter
 import fnmatch
 import functools
 import gc
 import hashlib
 import weakref
+from collections import Counter
 
 import numpy as np
 import torch
@@ -49,10 +49,18 @@ class BF16Method:
 
 def _prepare(worker, selected) -> None:
     from vllm import envs
-    from vllm.model_executor.layers.linear import LinearBase, UnquantizedLinearMethod, dispatch_unquantized_gemm
-    from vllm.model_executor.layers.vocab_parallel_embedding import ParallelLMHead, UnquantizedEmbeddingMethod
-    from vllm.model_executor.layers.fused_moe.router.gate_linear import GateLinear
     from vllm.model_executor.kernels.linear.mxfp8.marlin import MarlinMxfp8LinearKernel
+    from vllm.model_executor.layers.fused_moe.router.gate_linear import GateLinear
+    from vllm.model_executor.layers.linear import (
+        LinearBase,
+        UnquantizedLinearMethod,
+        dispatch_unquantized_gemm,
+    )
+    from vllm.model_executor.layers.vocab_parallel_embedding import (
+        ParallelLMHead,
+        UnquantizedEmbeddingMethod,
+    )
+
     from . import fp8_codec, fp8_runtime
 
     config = worker.vllm_config
@@ -177,8 +185,6 @@ def _prepare(worker, selected) -> None:
         layer.register_parameter("weight", None)
         row.update(compressed=True, gpu_bytes_exact=True)
         del raw
-    # Do not leave the final loop variable holding a compressed source alive.
-    raw = None
     gc.collect()
     torch.cuda.synchronize()
     if any(ref() is not None for _, ref in owners):
@@ -194,8 +200,8 @@ def install(selected) -> None:
         if selected != _SETTINGS:
             raise RuntimeError("Cannot change mixed compression settings in an active worker")
         return
-    from vllm.v1.worker.gpu_worker import Worker
     from vllm.model_executor.kernels.linear.mxfp8.marlin import MarlinMxfp8LinearKernel
+    from vllm.v1.worker.gpu_worker import Worker
     original_load = Worker.load_model
     original_apply = MarlinMxfp8LinearKernel.apply_weights
 

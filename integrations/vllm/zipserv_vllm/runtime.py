@@ -57,6 +57,9 @@ def _library() -> ctypes.CDLL:
             [ptr] * 8 + [integer] * 3 + [ptr] * 2 + [integer] * 3 + [ptr, integer]
         )
         lib.zipserv_mm.restype = integer
+        if hasattr(lib, "zipserv_mm_fp32"):
+            lib.zipserv_mm_fp32.argtypes = lib.zipserv_mm.argtypes
+            lib.zipserv_mm_fp32.restype = integer
         lib.zipserv_decode.argtypes = [ptr] * 8 + [integer] * 3 + [ptr] + [integer] * 2
         lib.zipserv_decode.restype = integer
     return lib
@@ -69,6 +72,12 @@ def _cuda_library() -> ctypes.CDLL:
             "This ZipServ library has no CUDA support; rebuild with --arch for GPU execution"
         )
     return lib
+
+
+def require_fp32_partials() -> None:
+    """Reject old ABI-2 libraries before opting into the new FP32 scratch symbol."""
+    if not hasattr(_cuda_library(), "zipserv_mm_fp32"):
+        raise RuntimeError("FP32 partials require a bridge exporting zipserv_mm_fp32; rebuild the CUDA library")
 
 
 def _free_packed(lib: ctypes.CDLL, native: _NativePacked) -> None:
@@ -189,6 +198,7 @@ def _linear(
     max_rare: int,
     start_exp: int,
     split_k: int,
+    fp32_partials: bool = False,
 ) -> Tensor:
     if m <= 0 or k <= 0 or m % 64 or k % 64:
         raise ValueError(
@@ -211,14 +221,19 @@ def _linear(
             "ZipServ output and Split-K workspace exceed native int32 indexing"
         )
     lib = _cuda_library()
+    if fp32_partials:
+        require_fp32_partials()
+    native_mm = lib.zipserv_mm_fp32 if fp32_partials else lib.zipserv_mm
     with torch.cuda.device(x.device):
         flat = x.reshape(tokens, k).contiguous()
         output = x.new_empty((n, m))
         # Native partial outputs have shape [split_k, n, m], not [n, m].
-        workspace = x.new_empty((split_k, n, m)) if split_k > 1 else x.new_empty(0)
+        workspace = (torch.empty((split_k, n, m), device=x.device,
+                                 dtype=torch.float32 if fp32_partials else x.dtype)
+                     if split_k > 1 else x.new_empty(0))
         stream = torch.cuda.current_stream(x.device).cuda_stream
         _check(
-            lib.zipserv_mm(
+            native_mm(
                 stream,
                 *(buffer.data_ptr() for buffer in buffers),
                 max_common,
@@ -248,12 +263,16 @@ def _linear_fake(
     max_rare: int,
     start_exp: int,
     split_k: int,
+    fp32_partials: bool = False,
 ) -> Tensor:
     return x.new_empty((*x.shape[:-1], m))
 
 
-def linear(x: Tensor, packed: PackedWeight, *, split_k: int = 1) -> Tensor:
+def linear(x: Tensor, packed: PackedWeight, *, split_k: int = 1,
+           partial_dtype: str = "bf16") -> Tensor:
     """Multiply with fused BF16 decoding; restored weights are exact, GEMM may round differently."""
+    if partial_dtype not in ("bf16", "fp32"):
+        raise ValueError("partial_dtype must be bf16 or fp32")
     return _linear(
         x,
         list(packed.buffers),
@@ -263,11 +282,17 @@ def linear(x: Tensor, packed: PackedWeight, *, split_k: int = 1) -> Tensor:
         packed.max_rare,
         packed.start_exp,
         split_k,
+        partial_dtype == "fp32",
     )
 
 
-def decompress(packed: PackedWeight) -> Tensor:
+def decompress(packed: PackedWeight, *, max_bytes: int | None = None) -> Tensor:
     """Decode on the current CUDA stream, primarily for bitwise verification."""
+    if max_bytes is not None:
+        if type(max_bytes) is not int or max_bytes < 0:
+            raise ValueError("max_bytes must be a nonnegative integer")
+        if packed.m * packed.k * 2 > max_bytes:
+            raise ValueError("Decoded BF16 weight exceeds its temporary allocation budget")
     device = packed.buffers[0].device
     if device.type != "cuda":
         raise ValueError("ZipServ decompression requires packed CUDA buffers")

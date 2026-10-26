@@ -9,6 +9,7 @@ projections. Select off/on before startup; captured graphs cannot be hot-switche
 from __future__ import annotations
 
 import functools
+from dataclasses import asdict
 import gc
 import hashlib
 import json
@@ -21,6 +22,17 @@ from same_runtime_plugin import SameRuntimeWorker
 CONFIG_SHA = '194d290ebb0f19aedc60d24ea9e236e33c86616e460f4a108a842f6fd5b8b198'
 INDEX_SHA = '6d1364a27eef78675390422b1b5230601817fb7460ce816951b2cd515934c85d'
 VLLM_VERSION = '0.1.dev20051+g487ecf187'
+
+
+def dispatch_settings():
+    from zipserv_vllm.bf16_policy import DispatchSettings
+    return DispatchSettings(
+        mode=os.environ.get('ZIPSERV_CT_BF16_DISPATCH', 'tokens'),
+        partial_dtype=os.environ.get('ZIPSERV_CT_BF16_PARTIAL_DTYPE', 'bf16'),
+        large_batch_tokens=int(os.environ.get('ZIPSERV_CT_BF16_LARGE_BATCH_TOKENS', '768')),
+        workspace_bytes=int(os.environ.get('ZIPSERV_CT_BF16_WORKSPACE_BYTES', str(64 * 2**20))),
+        decode_workspace_bytes=int(os.environ.get('ZIPSERV_CT_BF16_DECODE_WORKSPACE_BYTES', str(256 * 2**20))),
+    )
 
 
 def _source():
@@ -52,21 +64,26 @@ def _method_class():
     import torch
     from vllm.model_executor.layers.linear import UnquantizedLinearMethod, dispatch_unquantized_gemm
     from zipserv_vllm.runtime import decompress, linear
+    from zipserv_vllm.bf16_policy import select_split
 
     class CTExtraMethod(UnquantizedLinearMethod):
         """Keep graph-compatible fused decoding and use stock GEMM for large prefills."""
 
         def __init__(self, packed):
             self.packed = packed
+            self.settings = dispatch_settings()
+            self.sms = torch.cuda.get_device_properties(packed.buffers[0].device).multi_processor_count
+            self.stock_gemm = dispatch_unquantized_gemm()
 
         def apply(self, layer, x, bias=None):
             tokens = x.numel() // x.shape[-1]
-            if tokens > 768:
+            split = select_split(self.packed.m, tokens, self.packed.k, self.sms, self.settings)
+            if split is None:
                 if torch.cuda.is_current_stream_capturing():
                     raise RuntimeError('This trial qualifies decode-only CUDA graphs, not captured prefills')
-                return dispatch_unquantized_gemm()(layer, x, decompress(self.packed), bias)
-            split = 8 if tokens <= 32 else 4 if tokens <= 128 else 1
-            output = linear(x, self.packed, split_k=split)
+                return self.stock_gemm(layer, x, decompress(
+                    self.packed, max_bytes=self.settings.decode_workspace_bytes), bias)
+            output = linear(x, self.packed, split_k=split, partial_dtype=self.settings.partial_dtype)
             return output if bias is None else output + bias
 
     return CTExtraMethod
@@ -80,6 +97,14 @@ def _prepare(worker):
     from zipserv_vllm.runtime import BUFFER_NAMES, PackedWeight, compress, decompress
 
     enabled = os.environ['ZIPSERV_CT_EXTRA_BF16'] == 'on'
+    settings = dispatch_settings()
+    from zipserv_vllm.bf16_policy import decode_budget_rejection
+    if enabled and decode_budget_rejection(4096, 8192, settings):
+        raise RuntimeError('CT BF16 trial targets exceed the configured decoded-weight budget')
+    compilation = worker.vllm_config.compilation_config
+    if (int(compilation.mode) != 0 or compilation.cudagraph_mode.name != 'FULL_DECODE_ONLY'
+            or compilation.max_cudagraph_capture_size > settings.large_batch_tokens):
+        raise RuntimeError('Require decode-only graphs within the fused token threshold')
     rank = get_tensor_model_parallel_rank()
     root, indices, weight_map = _source()
     runner = worker.model_runner
@@ -93,8 +118,7 @@ def _prepare(worker):
               'config_sha256': CONFIG_SHA, 'index_sha256': INDEX_SHA,
               'script_sha256': hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
               'library_sha256': hashlib.sha256(Path(os.environ['ZIPSERV_LIBRARY']).read_bytes()).hexdigest(),
-              'policy': {'split_k_through_32': 8, 'split_k_through_128': 4,
-                         'split_k_through_768': 1, 'above_768': 'decode_then_stock_GEMM'},
+              'policy': asdict(settings),
               'cuda_allocated_before': torch.cuda.memory_allocated(), 'layers': []}
     worker._zipserv_ct_extra_report = report
     weak_weights = []
@@ -178,6 +202,10 @@ def install():
         raise RuntimeError('The CT trial requires the exact qualified legacy vLLM and dense dispatch')
     if os.environ.get('MXWAVE_COMPARE_ARM') != 'B':
         raise RuntimeError('Both arms must retain CT fused scale, embedding and KDA compression')
+    settings = dispatch_settings()
+    if mode == 'on' and settings.partial_dtype == 'fp32':
+        from zipserv_vllm.runtime import require_fp32_partials
+        require_fp32_partials()
     _source()
     import same_runtime_plugin
     same_runtime_plugin.install()
